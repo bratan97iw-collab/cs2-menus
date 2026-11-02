@@ -20,14 +20,16 @@ jobs:
           "$RUNNER_TEMP/ambuild-venv/bin/python" -m pip install git+https://github.com/alliedmodders/ambuild.git
           echo "$RUNNER_TEMP/ambuild-venv/bin" >> "$GITHUB_PATH"
 
-      - name: Fetch Metamod 1483 and CS2 SDK
+      - name: Fetch Metamod 1483, CS2 SDK and HL2SDK manifests
         run: |
           mkdir -p external
-          git clone --recursive https://github.com/alliedmodders/metamod-source.git external/metamod-source
+          git clone https://github.com/alliedmodders/metamod-source.git external/metamod-source
           git -C external/metamod-source checkout 170058a
           git -C external/metamod-source submodule update --init --recursive
-          git clone --recursive --branch cs2 https://github.com/alliedmodders/hl2sdk.git external/hl2sdk-cs2
+          git clone --branch cs2 https://github.com/alliedmodders/hl2sdk.git external/hl2sdk-cs2
+          git clone https://github.com/alliedmodders/hl2sdk-manifests.git ../hl2sdk-manifests
           git clone https://github.com/Pisex/SchemaEntity.git ../SchemaEntity
+          test -f ../hl2sdk-manifests/SdkHelpers.ambuild
 
       - name: Configure AMBuild
         env:
@@ -36,7 +38,7 @@ jobs:
         run: |
           mkdir -p build
           cd build
-          "$RUNNER_TEMP/ambuild-venv/bin/python" ../configure.py -s cs2 --targets x86_64 --enable-optimize --hl2sdk-manifests=./hl2sdk-manifests --mms_path="$MMS_PATH" --hl2sdk-root="$HL2SDK_ROOT"
+          "$RUNNER_TEMP/ambuild-venv/bin/python" ../configure.py -s cs2 --targets x86_64 --enable-optimize --hl2sdk-manifests=../hl2sdk-manifests --mms_path="$MMS_PATH" --hl2sdk-root="$HL2SDK_ROOT"
 
       - name: Compile Game Utils (API 18)
         working-directory: build
