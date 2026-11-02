@@ -1,15 +1,11 @@
-# vim: set sts=2 ts=8 sw=2 tw=99 et ft=python: 
+# vim: set sts=2 ts=8 sw=2 tw=99 et ft=python:
 import os
 
-# Here only one sdk should be available to generate only one executable in the end,
-# as multi-sdk loading isn't supported out of the box by metamod, and would require specifying the full path in the vdf
-# which in the end would ruin the multi-platform (unix, win etc) loading by metamod as it won't be able to append platform specific extension
-# so just fall back to the single binary.
-# Multi-sdk solutions should be manually loaded with a custom plugin loader (examples being sourcemod, stripper:source)
+# Single SDK target per output binary.
 for sdk_target in MMSPlugin.sdk_targets:
   sdk = sdk_target.sdk
   cxx = sdk_target.cxx
-    
+
   cxx.cxxflags += ['-Wno-invalid-offsetof', '-Wno-reorder-ctor']
   if cxx.target.platform == 'linux':
     cxx.defines += [
@@ -17,6 +13,7 @@ for sdk_target in MMSPlugin.sdk_targets:
       'bswap_32=__builtin_bswap32',
       'bswap_64=__builtin_bswap64',
     ]
+
   binary = MMSPlugin.HL2Library(builder, cxx, MMSPlugin.plugin_name, sdk)
 
   binary.compiler.cxxincludes += [
@@ -32,7 +29,7 @@ for sdk_target in MMSPlugin.sdk_targets:
     ]
   elif binary.compiler.target.platform == 'windows':
     binary.compiler.postlink += [
-      os.path.join('psapi.lib'),
+      'psapi.lib',
       os.path.join(builder.sourcePath, 'funchook', 'lib', 'funchook.lib'),
       os.path.join(builder.sourcePath, 'funchook', 'lib', 'distorm.lib'),
     ]
@@ -53,8 +50,7 @@ for sdk_target in MMSPlugin.sdk_targets:
     ]
   ]
   proto_sources.append(os.path.join(builder.sourcePath, 'customhud.proto'))
-  binary.custom = [builder.tools.Protoc(protoc = sdk_target.protoc, sources = proto_sources)]
-
+  binary.custom = [builder.tools.Protoc(protoc=sdk_target.protoc, sources=proto_sources)]
   binary.sources += [
     'utils.cpp',
     'plugin_autoload.cpp',
@@ -66,6 +62,18 @@ for sdk_target in MMSPlugin.sdk_targets:
     os.path.join('..', 'SchemaEntity', 'module.cpp'),
     os.path.join('..', 'SchemaEntity', 'ctimer.cpp'),
   ]
+
+  # Metamod's HL2Library may list SDK sources removed from recent CS2 SDKs.
+  # This implementation was retired from newer SDK layouts. Skip that *one*
+  # missing translation unit instead of inventing an empty replacement.
+  # If more missing source files appear, they should be inspected individually.
+  sdk_convarref = os.path.normpath(os.path.join(sdk['path'], 'tier0_perproject', 'convarref.cpp'))
+  if not os.path.isfile(sdk_convarref):
+    old_len = len(binary.sources)
+    binary.sources = [s for s in binary.sources
+                      if os.path.normpath(str(s)) != sdk_convarref]
+    if len(binary.sources) != old_len:
+      print('Skipping absent SDK implementation: {}'.format(sdk_convarref))
 
   if cxx.target.arch == 'x86':
     binary.sources += ['sourcehook/sourcehook_hookmangen.cpp']
