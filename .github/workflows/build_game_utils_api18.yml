@@ -1,4 +1,4 @@
-name: Build Game Utils for Metamod 1483 (diagnostic)
+name: Build Game Utils for Metamod 1483 (API 18)
 
 on:
   workflow_dispatch:
@@ -12,7 +12,7 @@ jobs:
       - name: Checkout Game Utils source
         uses: actions/checkout@v4
 
-      - name: Install build prerequisites and AMBuild
+      - name: Install build prerequisites
         shell: bash
         run: |
           set -euo pipefail
@@ -22,20 +22,20 @@ jobs:
           "$RUNNER_TEMP/ambuild-venv/bin/python" -m pip install git+https://github.com/alliedmodders/ambuild.git
           echo "$RUNNER_TEMP/ambuild-venv/bin" >> "$GITHUB_PATH"
 
-      - name: Fetch SDK dependencies
+      - name: Fetch Metamod 1483, CS2 SDK and HL2SDK manifests
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p external
-          git clone --recursive https://github.com/alliedmodders/metamod-source.git external/metamod-source
+          git clone https://github.com/alliedmodders/metamod-source.git external/metamod-source
           git -C external/metamod-source checkout 170058a
           git -C external/metamod-source submodule update --init --recursive
           git clone --recursive --branch cs2 https://github.com/alliedmodders/hl2sdk.git external/hl2sdk-cs2
           git clone https://github.com/alliedmodders/hl2sdk-manifests.git ../hl2sdk-manifests
           git clone https://github.com/Pisex/SchemaEntity.git ../SchemaEntity
-          echo 'Checking SDK manifests:'
-          ls -l ../hl2sdk-manifests/SdkHelpers.ambuild
           test -f ../hl2sdk-manifests/SdkHelpers.ambuild
+          echo "Manifest exists: $(realpath ../hl2sdk-manifests/SdkHelpers.ambuild)"
+          ls -la ../hl2sdk-manifests/SdkHelpers.ambuild
 
       - name: Configure AMBuild
         shell: bash
@@ -46,16 +46,19 @@ jobs:
           set -euo pipefail
           mkdir -p build
           cd build
-          "$RUNNER_TEMP/ambuild-venv/bin/python" ../configure.py -s cs2 --targets x86_64 --enable-optimize --hl2sdk-manifests=../hl2sdk-manifests --mms_path="$MMS_PATH" --hl2sdk-root="$HL2SDK_ROOT"
+          "$RUNNER_TEMP/ambuild-venv/bin/python" ../configure.py \
+            -s cs2 --targets x86_64 --enable-optimize \
+            --hl2sdk-manifests=../hl2sdk-manifests \
+            --mms_path="$MMS_PATH" --hl2sdk-root="$HL2SDK_ROOT"
 
-      - name: Compile Game Utils (API 18)
+      - name: Compile Game Utils
         shell: bash
         working-directory: build
         run: |
           set -euo pipefail
-          ambuild
+          "$RUNNER_TEMP/ambuild-venv/bin/ambuild"
 
-      - name: Upload compiled files
+      - name: Upload experimental compiled files
         if: success()
         uses: actions/upload-artifact@v4
         with:
