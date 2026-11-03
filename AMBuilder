@@ -20,6 +20,8 @@ for sdk_target in MMSPlugin.sdk_targets:
     os.path.join(builder.currentSourcePath, 'funchook', 'include'),
     os.path.join(builder.sourcePath, 'include'),
     os.path.join(builder.sourcePath, '..', 'SchemaEntity'),
+    # SchemaEntity/ctimer.h includes utlvector.h without tier1/ prefix.
+    os.path.join(sdk['path'], 'public', 'tier1'),
   ]
 
   if binary.compiler.target.platform == 'linux':
