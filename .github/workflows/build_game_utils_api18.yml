@@ -35,11 +35,36 @@ jobs:
           git clone https://github.com/Pisex/SchemaEntity.git ../SchemaEntity
           test -f ../hl2sdk-manifests/SdkHelpers.ambuild
 
+      - name: Adapt SchemaEntity headers for current CS2 SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          root = Path('../SchemaEntity')
+          globaltypes = root / 'globaltypes.h'
+          original = globaltypes.read_text()
+          assert '#include "schemasystem.h"' in original, 'SchemaEntity globaltypes.h changed; inspect before patching'
+          if '#include "gametrace.h"' not in original:
+              original = original.replace('#include "schemasystem.h"', '#include "schemasystem.h"\n#include "ray.h"\n#include "gametrace.h"', 1)
+          globaltypes.write_text(original)
+          print('Updated SchemaEntity/globaltypes.h with ray.h and gametrace.h')
+
+          schemasystem = root / 'schemasystem.cpp'
+          old = schemasystem.read_text()
+          count = old.count('NetworkStateChanged_t')
+          assert count >= 3, f'Expected legacy NetworkStateChanged_t references, found {count}; inspect dependency version'
+          new = old.replace('NetworkStateChanged_t', 'NetworkStateChangedData')
+          schemasystem.write_text(new)
+          print(f'Renamed {count} NetworkStateChanged_t reference(s) to NetworkStateChangedData')
+          PY
+          test -f external/hl2sdk-cs2/public/ray.h
+          test -f external/hl2sdk-cs2/public/gametrace.h
+
       - name: Restore CS2 protobuf sources for legacy Pisex build
         shell: bash
         run: |
           set -euo pipefail
-          # Legacy AMBuilder requires game_protobufs/csgo; newer SDK checkouts do not carry it.
           git clone --depth 1 https://github.com/SteamTracking/Protobufs.git "$RUNNER_TEMP/cs2-protobufs"
           proto_src="$RUNNER_TEMP/cs2-protobufs/csgo"
           proto_dst="$GITHUB_WORKSPACE/external/hl2sdk-cs2/thirdparty/game_protobufs/csgo"
