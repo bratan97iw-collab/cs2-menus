@@ -40,7 +40,7 @@
 #include <chrono>
 #include <array>
 #include <thread>
-#include <netmessages.h>
+#include "netmessages.pb.h"
 #include <igamesystem.h>
 #include <usermessages.h>
 #include "customhud.pb.h"
