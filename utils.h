@@ -17,7 +17,7 @@
 #include <functional>
 #include "utils.hpp"
 #include <utlstring.h>
-#include <keyvalues.h>
+#include <tier1/KeyValues.h>
 #include "CCSPlayerController.h"
 #include "CCSCustomHudLayout.h"
 #include "igameeventsystem.h"
