@@ -150,6 +150,13 @@ jobs:
           print("Header dependencies updated successfully")
           PY
 
+      - name: Break SchemaEntity services include cycle
+        shell: bash
+        run: |
+          set -euo pipefail
+          sed -i '/^#include <CCSPlayerPawn.h>$/d' ../SchemaEntity/services.h
+          echo "Removed circular pawn include from services.h"
+
       - name: Compile Game Utils (API 18)
         shell: bash
         working-directory: build
