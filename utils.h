@@ -8,7 +8,7 @@
 #include <entity2/entitysystem.h>
 #include <steam/steam_gameserver.h>
 #include "irecipientfilter.h"
-#include "igameevents.h"
+#include <engine/igameeventsystem.h>
 #include "entitysystem.h"
 #include "vector.h"
 #include "entitykeyvalues.h"
