@@ -102,6 +102,54 @@ jobs:
           sed -i 's/FL_CONTROLLER_FAKECLIENT/FL_FAKECLIENT/g' ../SchemaEntity/CCSPlayerController.h
           echo "Legacy fake client flags updated"
 
+      - name: Fix SchemaEntity circular includes
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          base = Path("../SchemaEntity")
+
+          def replace_once(path, old, new):
+              text = path.read_text()
+              if old not in text:
+                  raise SystemExit(f"Expected text not found: {path}: {old}")
+              path.write_text(text.replace(old, new, 1))
+
+          replace_once(
+              base / "CBasePlayerPawn.h",
+              "class CBasePlayerPawn :",
+              "class CBasePlayerController;\n\nclass CBasePlayerPawn :"
+          )
+
+          replace_once(
+              base / "CBasePlayerController.h",
+              '#include "CCSPlayerPawn.h"',
+              '#include "CBasePlayerPawn.h"'
+          )
+
+          replace_once(
+              base / "CCSPlayerPawn.h",
+              '#include "CCSPlayerController.h"',
+              '// Forward declaration of CCSPlayerController below'
+          )
+
+          replace_once(
+              base / "CCSPlayerController.h",
+              '#include "CBasePlayerController.h"',
+              '#include "CBasePlayerController.h"\n#include "CCSPlayerPawn.h"'
+          )
+
+          replace_once(
+              Path("utils.h"),
+              '#include "igameeventsystem.h"',
+              '#include <engine/igameeventsystem.h>'
+          )
+
+          print("Header dependencies updated successfully")
+          PY
+
       - name: Compile Game Utils (API 18)
         shell: bash
         working-directory: build
