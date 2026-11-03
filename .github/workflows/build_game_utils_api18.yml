@@ -94,6 +94,14 @@ jobs:
           echo "=== Fake client flags ==="
           grep -RnE 'FL_(PAWN_|CONTROLLER_)?FAKECLIENT' external/hl2sdk-cs2/public ../SchemaEntity | head -40 || true
 
+      - name: Fix legacy fake client flags
+        shell: bash
+        run: |
+          set -euo pipefail
+          sed -i 's/FL_PAWN_FAKECLIENT/FL_FAKECLIENT/g' ../SchemaEntity/CCSPlayerPawn.h
+          sed -i 's/FL_CONTROLLER_FAKECLIENT/FL_FAKECLIENT/g' ../SchemaEntity/CCSPlayerController.h
+          echo "Legacy fake client flags updated"
+
       - name: Compile Game Utils (API 18)
         shell: bash
         working-directory: build
