@@ -1,0 +1,53 @@
+name: Audit Pisex HUD API compatibility
+
+on:
+  workflow_dispatch:
+
+jobs:
+  audit:
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout Pisex Game Utils fork
+        uses: actions/checkout@v4
+
+      - name: Download SDK sources for comparison
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --depth 1 https://github.com/Pisex/SchemaEntity.git schema-legacy
+          git clone --depth 1 https://github.com/Source2Mod/source2mod-sdk.git source2mod-sdk
+          git clone --depth 1 --branch cs2 https://github.com/alliedmodders/hl2sdk.git hl2sdk-cs2
+
+      - name: Produce HUD migration audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p hud-audit
+          {
+            echo '=== Old API usages in Game Utils ==='
+            grep -RnE 'CCSCustomHudLayout|Set(Global)?HasClass|Set(Global)?DialogVariableString|GetDialogVariableString|Set(Global)?InputCaptureEnabled|GetInputCaptureEnabled' \
+              --include='*.cpp' --include='*.h' --exclude-dir=hud-audit \
+              --exclude-dir=source2mod-sdk --exclude-dir=hl2sdk-cs2 --exclude-dir=schema-legacy . || true
+            echo
+            echo '=== Legacy SchemaEntity HUD header (if any) ==='
+            find schema-legacy -iname '*hud*' -print
+            echo
+            echo '=== Source2Mod HUD class headers ==='
+            find source2mod-sdk -iname '*CustomHudLayout*' -o -iname '*HUDPanel*'
+            echo
+            echo '=== Current SDK HUD class headers ==='
+            find hl2sdk-cs2 -iname '*CustomHudLayout*' -o -iname '*HUDPanel*'
+            echo
+            echo '=== New SDK methods and fields ==='
+            grep -RnE 'class CCSCustomHudLayout|class CCSCustomHudLayoutState|struct HUDPanel|m_vecHasClasses|m_vecDialogVariableStrings|m_vecPanelIds|m_playerSlot|GetLayoutState|GetDialogVariableString|SetDialogVariableString' \
+              source2mod-sdk/public source2mod-sdk/src hl2sdk-cs2/public 2>/dev/null | head -240 || true
+          } | tee hud-audit/report.txt
+
+      - name: Upload audit report
+        uses: actions/upload-artifact@v4
+        with:
+          name: pisex-hud-api-audit
+          path: hud-audit/report.txt
+          if-no-files-found: error
