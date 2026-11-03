@@ -1,7 +1,8 @@
 # vim: set sts=2 ts=8 sw=2 tw=99 et ft=python:
 import os
 
-# Single SDK target per output binary.
+# Game Utils / Metamod 1483: skip source files removed from newer HL2SDK layouts.
+# This only changes the compilation source list, not plugin behavior.
 for sdk_target in MMSPlugin.sdk_targets:
   sdk = sdk_target.sdk
   cxx = sdk_target.cxx
@@ -13,7 +14,6 @@ for sdk_target in MMSPlugin.sdk_targets:
       'bswap_32=__builtin_bswap32',
       'bswap_64=__builtin_bswap64',
     ]
-
   binary = MMSPlugin.HL2Library(builder, cxx, MMSPlugin.plugin_name, sdk)
 
   binary.compiler.cxxincludes += [
@@ -63,17 +63,29 @@ for sdk_target in MMSPlugin.sdk_targets:
     os.path.join('..', 'SchemaEntity', 'ctimer.cpp'),
   ]
 
-  # Metamod's HL2Library may list SDK sources removed from recent CS2 SDKs.
-  # This implementation was retired from newer SDK layouts. Skip that *one*
-  # missing translation unit instead of inventing an empty replacement.
-  # If more missing source files appear, they should be inspected individually.
-  sdk_convarref = os.path.normpath(os.path.join(sdk['path'], 'tier0_perproject', 'convarref.cpp'))
-  if not os.path.isfile(sdk_convarref):
-    old_len = len(binary.sources)
-    binary.sources = [s for s in binary.sources
-                      if os.path.normpath(str(s)) != sdk_convarref]
-    if len(binary.sources) != old_len:
-      print('Skipping absent SDK implementation: {}'.format(sdk_convarref))
+  # HL2Library() can register SDK C++ files which no longer exist in current
+  # CS2 headers. Remove only files INSIDE this SDK tree which are absent.
+  # Keep project sources intact, so missing project files remain visible errors.
+  sdk_root = os.path.normpath(os.path.abspath(sdk['path']))
+  filtered_sources = []
+  missing_sdk_sources = []
+  for source in binary.sources:
+    source_name = os.fspath(source)
+    if os.path.isabs(source_name):
+      candidate = os.path.normpath(source_name)
+      try:
+        inside_sdk = os.path.commonpath([sdk_root, candidate]) == sdk_root
+      except ValueError:
+        inside_sdk = False
+      if inside_sdk and not os.path.isfile(candidate):
+        missing_sdk_sources.append(candidate)
+        continue
+    filtered_sources.append(source)
+  binary.sources = filtered_sources
+  for missing in missing_sdk_sources:
+    print('Skipped removed SDK translation unit: {}'.format(missing))
+  if missing_sdk_sources:
+    print('WARNING: skipped {} missing SDK source(s); linker errors may require real replacements.'.format(len(missing_sdk_sources)))
 
   if cxx.target.arch == 'x86':
     binary.sources += ['sourcehook/sourcehook_hookmangen.cpp']
