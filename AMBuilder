@@ -22,6 +22,8 @@ for sdk_target in MMSPlugin.sdk_targets:
     os.path.join(builder.sourcePath, '..', 'SchemaEntity'),
     # SchemaEntity/ctimer.h includes utlvector.h without tier1/ prefix.
     os.path.join(sdk['path'], 'public', 'tier1'),
+    # Metamod 1483: ISmmPlugin.h includes khook.hpp from its bundled KHook library.
+    os.path.join(builder.sourcePath, 'external', 'metamod-source', 'third_party', 'khook', 'include'),
   ]
 
   if binary.compiler.target.platform == 'linux':
