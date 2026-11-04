@@ -31,10 +31,46 @@ jobs:
           git -C external/metamod-source checkout 170058a
           git -C external/metamod-source submodule update --init --recursive
           git clone --recursive --branch cs2 https://github.com/alliedmodders/s2sdk.git external/hl2sdk-cs2
+          git -C external/hl2sdk-cs2 checkout ab23a7e3dfa754ce822a70aa456f5be40eb3845e
           git -C external/hl2sdk-cs2 rev-parse HEAD | tee "$RUNNER_TEMP/s2sdk-commit.txt"
           git clone https://github.com/alliedmodders/hl2sdk-manifests.git ../hl2sdk-manifests
           git clone https://github.com/Pisex/SchemaEntity.git ../SchemaEntity
           test -f ../hl2sdk-manifests/SdkHelpers.ambuild
+
+      - name: Restore legacy game event interface declaration (compile test only)
+        shell: bash
+        run: |
+          set -euo pipefail
+          # s2sdk no longer ships engine/igameeventsystem.h. Keep the old
+          # declaration for a compile-only compatibility experiment.
+          # This does NOT establish runtime ABI compatibility.
+          sdk_public="external/hl2sdk-cs2/public"
+          mkdir -p "$sdk_public/engine"
+          url="https://raw.githubusercontent.com/alliedmodders/hl2sdk/3f4110dce3060b352d49bf100f1a43f7705aab06/public/engine/igameeventsystem.h"
+          curl --fail --location --retry 3 --silent --show-error "$url" \
+            --output "$sdk_public/engine/igameeventsystem.h"
+          grep -q 'GAMEEVENTSYSTEM_INTERFACE_VERSION' "$sdk_public/engine/igameeventsystem.h"
+          grep -q 'PostEventAbstract' "$sdk_public/engine/igameeventsystem.h"
+          echo 'Legacy IGameEventSystem declaration staged from pinned old SDK.'
+          echo 'Header dependencies in new s2sdk:'
+          for header in eiface.h inetchannel.h irecipientfilter.h; do
+            if test -f "$sdk_public/$header"; then
+              echo "present: $header"
+            else
+              echo "MISSING: $header (will require an SDK-level port, not an unsafe guessed shim)"
+            fi
+          done
+
+      - name: Verify new public SDK declarations
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s external/hl2sdk-cs2/public/engine2/serversideclientbase.h
+          test -s external/hl2sdk-cs2/public/engine2/serversideclient.h
+          test -s external/hl2sdk-cs2/public/entity2/entitysystem.h
+          grep -q 'ProcessTick' external/hl2sdk-cs2/public/engine2/serversideclientbase.h
+          grep -q 'AddResource' external/hl2sdk-cs2/public/entity2/entitysystem.h
+          echo 'Verified public interface declarations in s2sdk.'
 
       - name: Correct KHook reference argument stack sizing
         shell: bash
@@ -274,6 +310,22 @@ jobs:
         working-directory: build
         run: |
           set -euo pipefail
+          # This check runs IN THE SAME STEP as ambuild. If the SDK path has
+          # changed or the fix was not committed, fail before a misleading compile.
+          hdr="../external/hl2sdk-cs2/public/engine/igameeventsystem.h"
+          echo "GitHub commit: ${GITHUB_SHA}"
+          echo "Working directory: $(pwd)"
+          echo "Checking the actual compiler include root: $hdr"
+          if [[ ! -s "$hdr" ]]; then
+            echo 'ERROR: legacy game event header was NOT staged. Re-fetching pinned original header.'
+            mkdir -p "$(dirname "$hdr")"
+            url="https://raw.githubusercontent.com/alliedmodders/hl2sdk/3f4110dce3060b352d49bf100f1a43f7705aab06/public/engine/igameeventsystem.h"
+            curl --fail --location --retry 3 --silent --show-error "$url" --output "$hdr"
+          fi
+          test -s "$hdr"
+          grep -q 'GAMEEVENTSYSTEM_INTERFACE_VERSION' "$hdr" || { echo 'ERROR: fetched file is not the expected interface header'; exit 2; }
+          echo 'CONFIRMED: game event header exists before compiler starts.'
+          sha256sum "$hdr"
           ambuild
 
       - name: Capture exact SDK declarations after compile
