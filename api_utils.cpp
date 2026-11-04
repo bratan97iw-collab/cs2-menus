@@ -7,18 +7,25 @@
 
 void ClientPrintFilter(CPlayerBitVec filter, int msg_dest, const char *msg_name, const char *param1, const char *param2, const char *param3, const char *param4)
 {
-	static INetworkMessageInternal *netmsg = g_pNetworkMessages->FindNetworkMessagePartial("CUserMessageTextMsg");
-	std::unique_ptr<CUserMessageTextMsg_t> msg(netmsg->AllocateMessage()->As<CUserMessageTextMsg_t>());
+	if (!g_pNetworkMessages || !g_gameEventSystem)
+		return;
+	INetworkMessageInternal* netmsg = g_pNetworkMessages->FindNetworkMessagePartial("CUserMessageTextMsg");
+	if (!netmsg)
+		return;
+	CNetMessage* allocated = netmsg->AllocateMessage();
+	if (!allocated)
+		return;
+	auto* msg = allocated->ToPB<CUserMessageTextMsg>();
 	msg->set_dest(msg_dest);
-	msg->add_param(msg_name);
-	msg->add_param(param1);
-	msg->add_param(param2);
-	msg->add_param(param3);
-	msg->add_param(param4);
-	
-	g_gameEventSystem->PostEventAbstract(-1, false, ABSOLUTE_PLAYER_LIMIT, reinterpret_cast<const uint64*>(filter.Base()), netmsg, msg.get(), 0, NetChannelBufType_t::BUF_RELIABLE);
-	// msg->Send(filter);
-    // delete msg;
+	msg->add_param(msg_name ? msg_name : "");
+	msg->add_param(param1 ? param1 : "");
+	msg->add_param(param2 ? param2 : "");
+	msg->add_param(param3 ? param3 : "");
+	msg->add_param(param4 ? param4 : "");
+	CRecipientFilter recipients;
+	recipients.SetRecipients(filter);
+	g_gameEventSystem->PostEventAbstract(-1, false, &recipients, netmsg, allocated, 0);
+	g_pNetworkMessages->DeallocateNetMessageAbstract(netmsg, allocated);
 }
 
 void UtilsApi::PrintToChatAll(const char *msg, ...)
@@ -238,6 +245,7 @@ void UtilsApi::PrintToCenterHtmlAll(int iDuration, const char *msg, ...)
 
 	int iEnd = std::time(0) + iDuration;
 	IGameEvent* pEvent = gameeventmanager->CreateEvent("show_survival_respawn_status");
+	if (!pEvent) return;
 	pEvent->SetString("loc_token", buf);
 	pEvent->SetInt("userid", -1);
 	if(UTIL_GetLegacyGameEventListener)
@@ -421,7 +429,7 @@ void UtilsApi::ErrorLog(const char* msg, ...)
 	V_vsnprintf(buf, sizeof(buf), msg, args);
 	va_end(args);
 
-	ConColorMsg(Color(255, 0, 0, 255), "[Error] %s\n", buf);
+	Msg("[Error] %s\n", buf);
 
 	char szPath[256], szBuffer[2048];
 	g_SMAPI->PathFormat(szPath, sizeof(szPath), "%s/addons/logs/%s.txt", g_SMAPI->GetBaseDir(), formatCurrentTime2().c_str());
