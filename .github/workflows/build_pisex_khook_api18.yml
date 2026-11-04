@@ -258,6 +258,81 @@ jobs:
           path: sdk-diagnostics/
           if-no-files-found: warn
 
+      - name: Capture full ABI evidence (SDK and SchemaEntity)
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p sdk-full-evidence/headers
+          python3 - <<'PYABI'
+          from pathlib import Path
+          import shutil
+
+          dest = Path('sdk-full-evidence')
+          roots = [Path('external/hl2sdk-cs2'), Path('external/metamod-source'), Path('../SchemaEntity')]
+          terms = (
+              'CServerSideClientBase', 'CServerSideClient', 'CNETMsg_Tick_t',
+              'CNETMsg_StringCmd_t', 'GameSessionConfiguration_t',
+              'IEntityResourceManifest', 'ProcessTick', 'ProcessStringCmd',
+              'OnBuildGameSessionManifest', 'ProcessUsercmds', 'CCheckTransmitInfo'
+          )
+          candidates = []
+          for root in roots:
+              if not root.exists():
+                  continue
+              for path in root.rglob('*'):
+                  if not path.is_file() or path.suffix.lower() not in ('.h', '.hpp', '.hh'):
+                      continue
+                  if '/thirdparty/' in str(path).lower() and '/khook/' not in str(path).lower():
+                      continue
+                  if path.stat().st_size > 512000:
+                      continue
+                  try:
+                      contents = path.read_text(errors='replace')
+                  except OSError:
+                      continue
+                  hits = [term for term in terms if term in contents]
+                  if hits:
+                      candidates.append((path, hits))
+
+          with (dest / 'manifest.txt').open('w', encoding='utf-8') as out:
+              print('Full header evidence from GitHub Actions; not an ABI verification.', file=out)
+              print('SDK roots:', *(str(x) for x in roots), sep='\n  ', file=out)
+              print('Found candidate headers:', len(candidates), file=out)
+              for path, hits in candidates:
+                  print(f'{path} | {", ".join(hits)}', file=out)
+
+          # Preserve each original header path to make includes and dependencies traceable.
+          # A cap keeps the artifact reasonably small while prioritizing the relevant SDK files.
+          priority = lambda item: (-len(item[1]), len(str(item[0])), str(item[0]))
+          selected = sorted(candidates, key=priority)[:100]
+          for path, _ in selected:
+              prefix = 'SchemaEntity' if str(path).startswith('../SchemaEntity') else 'repository'
+              relative = path.relative_to('../SchemaEntity') if prefix == 'SchemaEntity' else path
+              target = dest / 'headers' / prefix / relative
+              target.parent.mkdir(parents=True, exist_ok=True)
+              shutil.copy2(path, target)
+          print(f'Captured {len(selected)} complete SDK/SchemaEntity headers')
+          for p in ('utils.cpp', 'utils.h', 'include/players.h', 'AMBuilder'):
+              source = Path(p)
+              if source.is_file():
+                  target = dest / 'project' / p
+                  target.parent.mkdir(parents=True, exist_ok=True)
+                  shutil.copy2(source, target)
+          PYABI
+          echo "GitHub SHA: $GITHUB_SHA" > sdk-full-evidence/build-info.txt
+          echo "GitHub workflow: $GITHUB_WORKFLOW" >> sdk-full-evidence/build-info.txt
+          test -s sdk-full-evidence/manifest.txt
+
+      - name: Upload complete Pisex ABI evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pisex-api18-full-abi-evidence
+          path: sdk-full-evidence/
+          if-no-files-found: error
+          retention-days: 7
+
       - name: Reject unresolved custom HUD layout methods
         if: success()
         shell: bash
