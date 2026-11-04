@@ -90,8 +90,24 @@ jobs:
           schemasystem.write_text(new)
           print(f'Renamed {count} NetworkStateChanged_t reference(s) to NetworkStateChangedData')
           PY
-          test -f external/hl2sdk-cs2/public/ray.h
-          test -f external/hl2sdk-cs2/public/gametrace.h
+          echo '=== New s2sdk header layout ==='
+          find external/hl2sdk-cs2 -type f \( -name 'ray.h' -o -name 'gametrace.h' \) -print || true
+          # Do not fail this investigation on old hl2sdk paths. Modern s2sdk
+          # can reorganize headers. The compiler will report actual missing includes.
+
+      - name: Inspect new SDK header availability
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p sdk-diagnostics
+          {
+            echo '== s2sdk commit =='
+            git -C external/hl2sdk-cs2 rev-parse HEAD || true
+            echo '== header candidates =='
+            find external/hl2sdk-cs2 -type f \( -iname '*ray*' -o -iname '*trace*' -o -iname '*manifest*' -o -iname '*client*' \) | head -300 || true
+            echo '== available public =='
+            ls -lah external/hl2sdk-cs2/public/ || true
+          } > sdk-diagnostics/s2sdk-header-layout.txt 2>&1
 
       - name: Restore CS2 protobuf sources for legacy Pisex build
         shell: bash
