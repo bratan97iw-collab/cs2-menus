@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <khook.hpp>
 #include "utils.h"
 #include "menus_internal.h"
 #include "plugin_autoload.h"
@@ -119,61 +120,336 @@ ItemExtra* UTIL_ResolveItemExtra(const ItemRef& ref)
 std::vector<std::string> g_vCommandEater;
 std::map<int, std::vector<int>> g_mapTransmitState;
 
-int m_iBuildGameSessionManifestHookID;
-int g_iOnTakeDamageAliveId = -1;
-int g_iOnClientConnectHook = -1;
-int g_iOnClientPerformDisconnectionHook = -1;
-int g_iProcessTickHook = -1;
-int g_iProcessStringCmdHook = -1;
-
 std::vector<std::string> g_mapPrecache;
 
 std::map<int, std::map<std::string, CommandCallback>> ConsoleCommands;
 std::map<int, std::map<std::string, CommandCallback>> ChatCommands;
 Player* m_Players[64];
 
+// KHook migration stage 3: original Pisex callbacks stay unchanged.
+// One KHook per virtual method, with explicit matching install/uninstall.
+struct PisexKHookBridge {
+    static KHook::Return<void> GameFramePre(IServerGameDLL*, bool simulating, bool firstTick, bool lastTick) {
+        return {KHook::Action::Ignore};
+    }
+    static KHook::Return<void> GameFramePost(IServerGameDLL*, bool simulating, bool firstTick, bool lastTick) {
+        g_Menus.GameFrame(simulating, firstTick, lastTick);
+        g_Menus.OnGameFramePost(simulating, firstTick, lastTick);
+        return {KHook::Action::Ignore};
+    }
+    static KHook::Return<void> ClientConnectedPre(IServerGameClients*, CPlayerSlot slot, const char* name,
+                                            uint64 xuid, const char* networkId, const char* address, bool fakePlayer) {
+        g_Menus.OnClientConnected(slot, name, xuid, networkId, address, fakePlayer);
+        return {KHook::Action::Ignore};
+    }
+
+    static KHook::Return<void> ClientDisconnectCallback(IServerGameClients*, CPlayerSlot slot, ENetworkDisconnectionReason reason, const char* name, uint64 xuid, const char* networkId) {
+        g_Menus.OnClientDisconnect(slot, reason, name, xuid, networkId);
+        return {KHook::Action::Ignore};
+    }
+
+    static KHook::Return<void> ClientPutInServerCallback(IServerGameClients*, CPlayerSlot slot, const char* name, int type, uint64 xuid) {
+        g_Menus.OnClientPutInServer(slot, name, type, xuid);
+        return {KHook::Action::Ignore};
+    }
+
+    static KHook::Return<void> ClientActiveCallback(IServerGameClients*, CPlayerSlot slot, bool loadGame, const char* name, uint64 xuid) {
+        g_Menus.OnClientActive(slot, loadGame, name, xuid);
+        return {KHook::Action::Ignore};
+    }
+
+    static KHook::Return<void> ClientFullyConnectCallback(IServerGameClients*, CPlayerSlot slot) {
+        g_Menus.OnClientFullyConnect(slot);
+        return {KHook::Action::Ignore};
+    }
+
+    static KHook::Return<void> ClientSettingsChangedCallback(IServerGameClients*, CPlayerSlot slot) {
+        g_Menus.OnClientSettingsChanged(slot);
+        return {KHook::Action::Ignore};
+    }
+
+    static KHook::Return<void> ProcessUsercmdsCallback(IServerGameClients*, CPlayerSlot slot, const CCLCMsg_Move_t& msg, bool paused) {
+        g_Menus.OnProcessUsercmds(slot, msg, paused);
+        return {KHook::Action::Ignore};
+    }
+
+    static KHook::Return<void> ClientVoiceCallback(IServerGameClients*, CPlayerSlot slot) {
+        g_Menus.OnClientVoice(slot);
+        return {KHook::Action::Ignore};
+    }
+
+    static KHook::Return<void> ClientCommandKeyValuesCallback(IServerGameClients*, CPlayerSlot slot, KeyValues* kv) {
+        g_Menus.OnClientCommandKeyValues(slot, kv);
+        return {KHook::Action::Ignore};
+    }
+
+    static KHook::Return<void> PreWorldUpdatePre(IServerGameDLL*, bool simulating) {
+        g_Menus.OnPreWorldUpdate(simulating);
+        return {KHook::Action::Ignore};
+    }
+    static KHook::Return<void> PreWorldUpdatePost(IServerGameDLL*, bool simulating) {
+        g_Menus.OnPreWorldUpdatePost(simulating);
+        return {KHook::Action::Ignore};
+    }
+    static KHook::Return<void> ServerHibernationUpdatePre(IServerGameDLL*, bool hibernating) {
+        g_Menus.OnServerHibernationUpdate(hibernating);
+        return {KHook::Action::Ignore};
+    }
+    static KHook::Return<void> ServerHibernationUpdatePost(IServerGameDLL*, bool hibernating) {
+        g_Menus.OnServerHibernationUpdatePost(hibernating);
+        return {KHook::Action::Ignore};
+    }
+    static KHook::Return<void> GameServerSteamAPIActivatedPre(IServerGameDLL*) {
+        g_Menus.OnGameServerSteamAPIActivated();
+        return {KHook::Action::Ignore};
+    }
+    static KHook::Return<void> GameServerSteamAPIActivatedPost(IServerGameDLL*) {
+        g_Menus.OnGameServerSteamAPIActivatedPost();
+        return {KHook::Action::Ignore};
+    }
+    static KHook::Return<void> GameServerSteamAPIDeactivatedPre(IServerGameDLL*) {
+        g_Menus.OnGameServerSteamAPIDeactivated();
+        return {KHook::Action::Ignore};
+    }
+    static KHook::Return<void> GameServerSteamAPIDeactivatedPost(IServerGameDLL*) {
+        g_Menus.OnGameServerSteamAPIDeactivatedPost();
+        return {KHook::Action::Ignore};
+    }
+    static KHook::Return<void> OnHostNameChangedPre(IServerGameDLL*, const char* name) {
+        g_Menus.OnHostNameChanged(name);
+        return {KHook::Action::Ignore};
+    }
+    static KHook::Return<void> OnHostNameChangedPost(IServerGameDLL*, const char* name) {
+        g_Menus.OnHostNameChangedPost(name);
+        return {KHook::Action::Ignore};
+    }
+    static KHook::Return<void> UpdateWhenNotInGamePre(IServerGameDLL*, float delta) {
+        g_Menus.OnUpdateWhenNotInGame(delta);
+        return {KHook::Action::Ignore};
+    }
+    static KHook::Return<void> UpdateWhenNotInGamePost(IServerGameDLL*, float delta) {
+        g_Menus.OnUpdateWhenNotInGamePost(delta);
+        return {KHook::Action::Ignore};
+    }
+    static KHook::Return<void> ServerConVarChangedPre(IServerGameDLL*, const char* name, const char* value) {
+        g_Menus.OnServerConVarChanged(name, value);
+        return {KHook::Action::Ignore};
+    }
+    static KHook::Return<void> ServerConVarChangedPost(IServerGameDLL*, const char* name, const char* value) {
+        g_Menus.OnServerConVarChangedPost(name, value);
+        return {KHook::Action::Ignore};
+    }
+
+
+    static KHook::Return<void> PreFatalShutdownPre(const IServerGameDLL*) { g_Menus.OnPreFatalShutdown(); return {KHook::Action::Ignore}; }
+    static KHook::Return<void> PreFatalShutdownPost(const IServerGameDLL*) { g_Menus.OnPreFatalShutdownPost(); return {KHook::Action::Ignore}; }
+    static KHook::Return<void> DispatchConCommandPre(ICvar*, ConCommandRef ref, const CCommandContext& ctx, const CCommand& args) {
+        return {g_Menus.OnDispatchConCommand(ref, ctx, args) ? KHook::Action::Supersede : KHook::Action::Ignore};
+    }
+    static KHook::Return<void> DispatchConCommandPost(ICvar*, ConCommandRef ref, const CCommandContext& ctx, const CCommand& args) {
+        g_Menus.OnDispatchConCommandPost(ref, ctx, args); return {KHook::Action::Ignore};
+    }
+    static KHook::Return<bool> SetClientListeningPre(IVEngineServer2* eng, CPlayerSlot receiver, CPlayerSlot sender, bool listen) {
+        bool actual = g_Menus.OnSetClientListening(receiver, sender, listen);
+        if (actual == listen) return {KHook::Action::Ignore, actual};
+        // Re-enter original with updated argument (KHook Recall is explicitly supported).
+        return KHook::Recall(&IVEngineServer2::SetClientListening, KHook::Return<bool>{KHook::Action::Supersede, actual}, eng, receiver, sender, actual);
+    }
+    static KHook::Return<bool> SetClientListeningPost(IVEngineServer2*, CPlayerSlot receiver, CPlayerSlot sender, bool listen) {
+        g_Menus.OnSetClientListeningPost(receiver, sender, listen); return {KHook::Action::Ignore, listen};
+    }
+    static KHook::Return<void> PostEventAbstractPre(IGameEventSystem*, CSplitScreenSlot slot, bool local, int count, const uint64* clients, INetworkMessageInternal* msg, const CNetMessage* data, unsigned long size, NetChannelBufType_t buf) {
+        g_Menus.OnPostEventAbstract(slot,local,count,clients,msg,data,size,buf); return {KHook::Action::Ignore};
+    }
+    static KHook::Return<void> PostEventAbstractPost(IGameEventSystem*, CSplitScreenSlot slot, bool local, int count, const uint64* clients, INetworkMessageInternal* msg, const CNetMessage* data, unsigned long size, NetChannelBufType_t buf) {
+        g_Menus.OnPostEventAbstractPost(slot,local,count,clients,msg,data,size,buf); return {KHook::Action::Ignore};
+    }
+    static KHook::Return<void> ClientCommandPre(IServerGameClients*, CPlayerSlot slot, const CCommand& args) {
+        return {g_Menus.ClientCommand(slot,args) ? KHook::Action::Supersede : KHook::Action::Ignore};
+    }
+    static KHook::Return<bool> ClientConnectPre(IServerGameClients*, CPlayerSlot slot, const char* name, uint64 xuid, const char* id, bool a, CBufferString* reason) {
+        bool allow = g_Menus.OnClientConnect(slot,name,xuid,id,a,reason);
+        return {allow ? KHook::Action::Ignore : KHook::Action::Supersede, allow};
+    }
+    static KHook::Return<void> ClientSvcUserMessagePre(IServerGameClients*, CPlayerSlot slot, int type, uint32 size, const void* data) {
+        g_Menus.OnClientSvcUserMessage(slot,type,size,data); return {KHook::Action::Ignore};
+    }
+    static KHook::Return<void> CheckTransmitPost(ISource2GameEntities*, CCheckTransmitInfo** info, int n, CBitVec<16384>& u1, CBitVec<16384>& u2, const Entity2Networkable_t** ents, const uint16* indexes, int count, bool enable) {
+        g_Menus.OnCheckTransmit(info,n,u1,u2,ents,indexes,count,enable); return {KHook::Action::Ignore};
+    }
+    static KHook::Return<void> StartupServerPost(INetworkServerService*, const GameSessionConfiguration_t& config, ISource2WorldSession* sess, const char* map) {
+        g_Menus.StartupServer(config,sess,map); return {KHook::Action::Ignore};
+    }
+    static KHook::Return<bool> FireEventPre(IGameEventManager2* mgr, IGameEvent* event, bool dontBroadcast) {
+        bool modified=dontBroadcast;
+        if (!g_Menus.FireEvent(event,modified)) return {KHook::Action::Supersede,false};
+        if (modified != dontBroadcast)
+            return KHook::Recall(&IGameEventManager2::FireEvent, KHook::Return<bool>{KHook::Action::Supersede,true},mgr,event,modified);
+        return {KHook::Action::Ignore,true};
+    }
+    static KHook::Return<bool> FireEventPost(IGameEventManager2*, IGameEvent* event, bool dontBroadcast) {
+        g_Menus.OnFireEventPost(event,dontBroadcast); return {KHook::Action::Ignore,true};
+    }
+    static KHook::Return<bool> OnTakeDamageAlivePre(CCSPlayerPawn* pawn, CTakeDamageInfoContainer* data) {
+        g_Menus.Hook_OnTakeDamage_Alive(pawn,data); return {KHook::Action::Ignore,true};
+    }
+    static KHook::Return<void> ServerClientConnectPost(CServerSideClient* cl, int socket, const char* name, int id, INetChannel* channel, uint8 flags, uint32 challenge) {
+        g_Menus.OnServerSideClientClientConnect(cl,socket,name,id,channel,flags,challenge); return {KHook::Action::Ignore};
+    }
+    static KHook::Return<void> ServerClientDisconnectPre(CServerSideClient* cl, ENetworkDisconnectionReason reason) {
+        g_Menus.OnCServerSideClientlientPerformDisconnection(cl,reason); return {KHook::Action::Ignore};
+    }
+    static KHook::Return<bool> ProcessTickPre(CServerSideClientBase* cl, const CNETMsg_Tick_t& msg) {
+        bool allow=g_Menus.OnProcessTick(cl,msg); return {allow ? KHook::Action::Ignore : KHook::Action::Supersede,allow};
+    }
+    static KHook::Return<bool> ProcessStringCmdPre(CServerSideClientBase* cl, const CNETMsg_StringCmd_t& msg) {
+        bool allow=g_Menus.OnProcessStringCmd(cl,msg); return {allow ? KHook::Action::Ignore : KHook::Action::Supersede,allow};
+    }
+    static KHook::Return<void> BuildGameSessionManifestPost(IGameSystem*, const EventBuildGameSessionManifest_t& ev) {
+        g_Menus.OnBuildGameSessionManifest(ev); return {KHook::Action::Ignore};
+    }
+
+    inline static KHook::Virtual<IServerGameDLL, void> preFatalShutdown{&IServerGameDLL::PreFatalShutdown,&PreFatalShutdownPre,&PreFatalShutdownPost};
+    inline static KHook::Virtual<ICvar,void,ConCommandRef,const CCommandContext&,const CCommand&> dispatchConCommand{&ICvar::DispatchConCommand,&DispatchConCommandPre,&DispatchConCommandPost};
+    inline static KHook::Virtual<IVEngineServer2,bool,CPlayerSlot,CPlayerSlot,bool> clientListening{&IVEngineServer2::SetClientListening,&SetClientListeningPre,&SetClientListeningPost};
+    inline static KHook::Virtual<IGameEventSystem,void,CSplitScreenSlot,bool,int,const uint64*,INetworkMessageInternal*,const CNetMessage*,unsigned long,NetChannelBufType_t> postEventAbstract{
+        static_cast<void (IGameEventSystem::*)(CSplitScreenSlot,bool,int,const uint64*,INetworkMessageInternal*,const CNetMessage*,unsigned long,NetChannelBufType_t)>(&IGameEventSystem::PostEventAbstract),&PostEventAbstractPre,&PostEventAbstractPost};
+    inline static KHook::Virtual<IServerGameClients,void,CPlayerSlot,const CCommand&> clientCommand{&IServerGameClients::ClientCommand,&ClientCommandPre,nullptr};
+    inline static KHook::Virtual<IServerGameClients,bool,CPlayerSlot,const char*,uint64,const char*,bool,CBufferString*> clientConnect{&IServerGameClients::ClientConnect,&ClientConnectPre,nullptr};
+    inline static KHook::Virtual<IServerGameClients,void,CPlayerSlot,int,uint32,const void*> clientSvcMessage{&IServerGameClients::ClientSvcUserMessage,&ClientSvcUserMessagePre,nullptr};
+    inline static KHook::Virtual<ISource2GameEntities,void,CCheckTransmitInfo**,int,CBitVec<16384>&,CBitVec<16384>&,const Entity2Networkable_t**,const uint16*,int,bool> checkTransmit{&ISource2GameEntities::CheckTransmit,nullptr,&CheckTransmitPost};
+    inline static KHook::Virtual<INetworkServerService,void,const GameSessionConfiguration_t&,ISource2WorldSession*,const char*> startupServer{&INetworkServerService::StartupServer,nullptr,&StartupServerPost};
+    inline static KHook::Virtual<IGameEventManager2,bool,IGameEvent*,bool> fireEvent{&IGameEventManager2::FireEvent,&FireEventPre,&FireEventPost};
+    inline static KHook::Virtual<CCSPlayerPawn,bool,CTakeDamageInfoContainer*> takeDamageAlive{std::uint32_t{0},&OnTakeDamageAlivePre,nullptr};
+    inline static KHook::Virtual<CServerSideClient,void,int,const char*,int,INetChannel*,uint8,uint32> clientSessionConnect{&CServerSideClient::Connect,nullptr,&ServerClientConnectPost};
+    inline static KHook::Virtual<CServerSideClient,void,ENetworkDisconnectionReason> clientSessionDisconnect{&CServerSideClient::PerformDisconnection,&ServerClientDisconnectPre,nullptr};
+    inline static KHook::Virtual<CServerSideClientBase,bool,const CNETMsg_Tick_t&> processTick{&CServerSideClientBase::ProcessTick,&ProcessTickPre,nullptr};
+    inline static KHook::Virtual<CServerSideClientBase,bool,const CNETMsg_StringCmd_t&> processStringCmd{&CServerSideClientBase::ProcessStringCmd,&ProcessStringCmdPre,nullptr};
+    inline static KHook::Virtual<IGameSystem,void,const EventBuildGameSessionManifest_t&> buildGameManifest{&IGameSystem::BuildGameSessionManifest,nullptr,&BuildGameSessionManifestPost};
+
+    inline static void* pawnFake[1]={};
+    inline static void* serverClientFake[1]={};
+    inline static void* gameSystemFake[1]={};
+    static void InstallPawn(void* vtable,int index) { if(index<=0 || index>512) return; pawnFake[0]=vtable; takeDamageAlive.Configure(index); takeDamageAlive.AddGlobal(reinterpret_cast<CCSPlayerPawn*>(pawnFake)); }
+    static void InstallServerClient(void* vtable) { serverClientFake[0]=vtable;
+        clientSessionConnect.AddGlobal(reinterpret_cast<CServerSideClient*>(serverClientFake));
+        clientSessionDisconnect.AddGlobal(reinterpret_cast<CServerSideClient*>(serverClientFake));
+        processTick.AddGlobal(reinterpret_cast<CServerSideClientBase*>(serverClientFake));
+        processStringCmd.AddGlobal(reinterpret_cast<CServerSideClientBase*>(serverClientFake)); }
+    static void InstallGameSystem(void* vtable) { gameSystemFake[0]=vtable; buildGameManifest.AddGlobal(reinterpret_cast<IGameSystem*>(gameSystemFake)); }
+    static void InstallEventManager(IGameEventManager2* mgr) {fireEvent.AddGlobal(mgr);}
+    static void UninstallDynamic(IGameEventManager2* mgr) {
+        if(mgr) fireEvent.RemoveGlobal(mgr);
+        if(pawnFake[0]) takeDamageAlive.RemoveGlobal(reinterpret_cast<CCSPlayerPawn*>(pawnFake));
+        if(serverClientFake[0]) {clientSessionConnect.RemoveGlobal(reinterpret_cast<CServerSideClient*>(serverClientFake)); clientSessionDisconnect.RemoveGlobal(reinterpret_cast<CServerSideClient*>(serverClientFake)); processTick.RemoveGlobal(reinterpret_cast<CServerSideClientBase*>(serverClientFake)); processStringCmd.RemoveGlobal(reinterpret_cast<CServerSideClientBase*>(serverClientFake));}
+        if(gameSystemFake[0]) buildGameManifest.RemoveGlobal(reinterpret_cast<IGameSystem*>(gameSystemFake));
+    }
+    inline static KHook::Virtual<IServerGameDLL, void, bool> preWorldUpdate{
+        &IServerGameDLL::PreWorldUpdate, &PisexKHookBridge::PreWorldUpdatePre, &PisexKHookBridge::PreWorldUpdatePost};
+    inline static KHook::Virtual<IServerGameDLL, void, bool> serverHibernationUpdate{
+        &IServerGameDLL::ServerHibernationUpdate, &PisexKHookBridge::ServerHibernationUpdatePre, &PisexKHookBridge::ServerHibernationUpdatePost};
+    inline static KHook::Virtual<IServerGameDLL, void> gameServerSteamAPIActivated{
+        &IServerGameDLL::GameServerSteamAPIActivated, &PisexKHookBridge::GameServerSteamAPIActivatedPre, &PisexKHookBridge::GameServerSteamAPIActivatedPost};
+    inline static KHook::Virtual<IServerGameDLL, void> gameServerSteamAPIDeactivated{
+        &IServerGameDLL::GameServerSteamAPIDeactivated, &PisexKHookBridge::GameServerSteamAPIDeactivatedPre, &PisexKHookBridge::GameServerSteamAPIDeactivatedPost};
+    inline static KHook::Virtual<IServerGameDLL, void, const char*> onHostNameChanged{
+        &IServerGameDLL::OnHostNameChanged, &PisexKHookBridge::OnHostNameChangedPre, &PisexKHookBridge::OnHostNameChangedPost};
+    inline static KHook::Virtual<IServerGameDLL, void, float> updateWhenNotInGame{
+        &IServerGameDLL::UpdateWhenNotInGame, &PisexKHookBridge::UpdateWhenNotInGamePre, &PisexKHookBridge::UpdateWhenNotInGamePost};
+    inline static KHook::Virtual<IServerGameDLL, void, const char*, const char*> serverConVarChanged{
+        &IServerGameDLL::ServerConVarChanged, &PisexKHookBridge::ServerConVarChangedPre, &PisexKHookBridge::ServerConVarChangedPost};
+
+    inline static KHook::Virtual<IServerGameClients, void, CPlayerSlot, ENetworkDisconnectionReason, const char*, uint64, const char*> clientDisconnect{
+        &IServerGameClients::ClientDisconnect, nullptr, &PisexKHookBridge::ClientDisconnectCallback};
+    inline static KHook::Virtual<IServerGameClients, void, CPlayerSlot, const char*, int, uint64> clientPutInServer{
+        &IServerGameClients::ClientPutInServer, nullptr, &PisexKHookBridge::ClientPutInServerCallback};
+    inline static KHook::Virtual<IServerGameClients, void, CPlayerSlot, bool, const char*, uint64> clientActive{
+        &IServerGameClients::ClientActive, nullptr, &PisexKHookBridge::ClientActiveCallback};
+    inline static KHook::Virtual<IServerGameClients, void, CPlayerSlot> clientFullyConnect{
+        &IServerGameClients::ClientFullyConnect, nullptr, &PisexKHookBridge::ClientFullyConnectCallback};
+    inline static KHook::Virtual<IServerGameClients, void, CPlayerSlot> clientSettingsChanged{
+        &IServerGameClients::ClientSettingsChanged, &PisexKHookBridge::ClientSettingsChangedCallback, nullptr};
+    inline static KHook::Virtual<IServerGameClients, void, CPlayerSlot, const CCLCMsg_Move_t&, bool> processUsercmds{
+        &IServerGameClients::ProcessUsercmds, &PisexKHookBridge::ProcessUsercmdsCallback, nullptr};
+    inline static KHook::Virtual<IServerGameClients, void, CPlayerSlot> clientVoice{
+        &IServerGameClients::ClientVoice, &PisexKHookBridge::ClientVoiceCallback, nullptr};
+    inline static KHook::Virtual<IServerGameClients, void, CPlayerSlot, KeyValues*> clientCommandKeyValues{
+        &IServerGameClients::ClientCommandKeyValues, &PisexKHookBridge::ClientCommandKeyValuesCallback, nullptr};
+
+    inline static KHook::Virtual<IServerGameDLL, void, bool, bool, bool> gameFrame{
+        &IServerGameDLL::GameFrame, &PisexKHookBridge::GameFramePre, &PisexKHookBridge::GameFramePost};
+    inline static KHook::Virtual<IServerGameClients, void, CPlayerSlot, const char*, uint64,
+                   const char*, const char*, bool> clientConnected{
+        &IServerGameClients::OnClientConnected, &PisexKHookBridge::ClientConnectedPre, nullptr};
+
+    static void Install(IServerGameDLL* gameDll, IServerGameClients* clients, ICvar* cvar, IGameEventSystem* events, IVEngineServer2* engine, INetworkServerService* network, ISource2GameEntities* entities) {
+        if (gameDll) preFatalShutdown.AddGlobal(gameDll);
+        if (cvar) dispatchConCommand.AddGlobal(cvar);
+        if (events) postEventAbstract.AddGlobal(events);
+        if (engine) clientListening.AddGlobal(engine);
+        if (network) startupServer.AddGlobal(network);
+        if (entities) checkTransmit.AddGlobal(entities);
+        if (clients) clientCommand.AddGlobal(clients);
+        if (clients) clientConnect.AddGlobal(clients);
+        if (clients) clientSvcMessage.AddGlobal(clients);
+        if (gameDll) preWorldUpdate.AddGlobal(gameDll);
+        if (gameDll) serverHibernationUpdate.AddGlobal(gameDll);
+        if (gameDll) gameServerSteamAPIActivated.AddGlobal(gameDll);
+        if (gameDll) gameServerSteamAPIDeactivated.AddGlobal(gameDll);
+        if (gameDll) onHostNameChanged.AddGlobal(gameDll);
+        if (gameDll) updateWhenNotInGame.AddGlobal(gameDll);
+        if (gameDll) serverConVarChanged.AddGlobal(gameDll);
+        if (gameDll) gameFrame.AddGlobal(gameDll);
+        if (clients) clientConnected.AddGlobal(clients);
+        if (clients) clientDisconnect.AddGlobal(clients);
+        if (clients) clientPutInServer.AddGlobal(clients);
+        if (clients) clientActive.AddGlobal(clients);
+        if (clients) clientFullyConnect.AddGlobal(clients);
+        if (clients) clientSettingsChanged.AddGlobal(clients);
+        if (clients) processUsercmds.AddGlobal(clients);
+        if (clients) clientVoice.AddGlobal(clients);
+        if (clients) clientCommandKeyValues.AddGlobal(clients);
+    }
+    static void Uninstall(IServerGameDLL* gameDll, IServerGameClients* clients, ICvar* cvar, IGameEventSystem* events, IVEngineServer2* engine, INetworkServerService* network, ISource2GameEntities* entities) {
+        UninstallDynamic(gameeventmanager);
+        if (clients) clientSvcMessage.RemoveGlobal(clients);
+        if (clients) clientConnect.RemoveGlobal(clients);
+        if (clients) clientCommand.RemoveGlobal(clients);
+        if (entities) checkTransmit.RemoveGlobal(entities);
+        if (network) startupServer.RemoveGlobal(network);
+        if (engine) clientListening.RemoveGlobal(engine);
+        if (events) postEventAbstract.RemoveGlobal(events);
+        if (cvar) dispatchConCommand.RemoveGlobal(cvar);
+        if (gameDll) preFatalShutdown.RemoveGlobal(gameDll);
+        if (gameDll) serverConVarChanged.RemoveGlobal(gameDll);
+        if (gameDll) updateWhenNotInGame.RemoveGlobal(gameDll);
+        if (gameDll) onHostNameChanged.RemoveGlobal(gameDll);
+        if (gameDll) gameServerSteamAPIDeactivated.RemoveGlobal(gameDll);
+        if (gameDll) gameServerSteamAPIActivated.RemoveGlobal(gameDll);
+        if (gameDll) serverHibernationUpdate.RemoveGlobal(gameDll);
+        if (gameDll) preWorldUpdate.RemoveGlobal(gameDll);
+        if (clients) clientCommandKeyValues.RemoveGlobal(clients);
+        if (clients) clientVoice.RemoveGlobal(clients);
+        if (clients) processUsercmds.RemoveGlobal(clients);
+        if (clients) clientSettingsChanged.RemoveGlobal(clients);
+        if (clients) clientFullyConnect.RemoveGlobal(clients);
+        if (clients) clientActive.RemoveGlobal(clients);
+        if (clients) clientPutInServer.RemoveGlobal(clients);
+        if (clients) clientDisconnect.RemoveGlobal(clients);
+        if (clients) clientConnected.RemoveGlobal(clients);
+        if (gameDll) gameFrame.RemoveGlobal(gameDll);
+    }
+}
+
+
 // IServerGameClients
-SH_DECL_HOOK6_void(IServerGameClients, OnClientConnected, SH_NOATTRIB, 0, CPlayerSlot, const char*, uint64, const char *, const char *, bool);
-SH_DECL_HOOK6(IServerGameClients, ClientConnect, SH_NOATTRIB, 0, bool, CPlayerSlot, const char*, uint64, const char *, bool, CBufferString *);
-SH_DECL_HOOK4_void(IServerGameClients, ClientPutInServer, SH_NOATTRIB, 0, CPlayerSlot, char const *, int, uint64);
-SH_DECL_HOOK4_void(IServerGameClients, ClientActive, SH_NOATTRIB, 0, CPlayerSlot, bool, char const *, uint64);
-SH_DECL_HOOK1_void(IServerGameClients, ClientFullyConnect, SH_NOATTRIB, 0, CPlayerSlot);
-SH_DECL_HOOK5_void(IServerGameClients, ClientDisconnect, SH_NOATTRIB, 0, CPlayerSlot, ENetworkDisconnectionReason, const char *, uint64, const char *);
-SH_DECL_HOOK2_void(IServerGameClients, ClientCommand, SH_NOATTRIB, 0, CPlayerSlot, const CCommand&);
-SH_DECL_HOOK1_void(IServerGameClients, ClientSettingsChanged, SH_NOATTRIB, 0, CPlayerSlot);
-SH_DECL_HOOK3_void(IServerGameClients, ProcessUsercmds, SH_NOATTRIB, 0, CPlayerSlot, const CCLCMsg_Move_t&, bool);
-SH_DECL_HOOK1_void(IServerGameClients, ClientVoice, SH_NOATTRIB, 0, CPlayerSlot);
-SH_DECL_HOOK2_void(IServerGameClients, ClientCommandKeyValues, SH_NOATTRIB, 0, CPlayerSlot, KeyValues*);
-SH_DECL_HOOK4_void(IServerGameClients, ClientSvcUserMessage, SH_NOATTRIB, 0, CPlayerSlot, int, uint32, const void *);
-// SH_DECL_HOOK2(IServerGameClients, ProcessClientVoiceData, SH_NOATTRIB, 0, bool, CPlayerSlot, void *);
 
 // ISource2Server
-SH_DECL_HOOK1_void(IServerGameDLL, PreWorldUpdate, SH_NOATTRIB, 0, bool);
-SH_DECL_HOOK3_void(IServerGameDLL, GameFrame, SH_NOATTRIB, 0, bool, bool, bool);
-SH_DECL_HOOK1_void(IServerGameDLL, ServerHibernationUpdate, SH_NOATTRIB, 0, bool);
-SH_DECL_HOOK0_void(IServerGameDLL, GameServerSteamAPIActivated, SH_NOATTRIB, 0);
-SH_DECL_HOOK0_void(IServerGameDLL, GameServerSteamAPIDeactivated, SH_NOATTRIB, 0);
-SH_DECL_HOOK1_void(IServerGameDLL, OnHostNameChanged, SH_NOATTRIB, 0, const char*);
-SH_DECL_HOOK0_void(IServerGameDLL, PreFatalShutdown, const, 0);
-SH_DECL_HOOK1_void(IServerGameDLL, UpdateWhenNotInGame, SH_NOATTRIB, 0, float);
-SH_DECL_HOOK2_void(IServerGameDLL, ServerConVarChanged, SH_NOATTRIB, 0, const char*, const char*);
-SH_DECL_HOOK3_void(INetworkServerService, StartupServer, SH_NOATTRIB, 0, const GameSessionConfiguration_t&, ISource2WorldSession*, const char*);
 
-SH_DECL_HOOK8_void(ISource2GameEntities, CheckTransmit, SH_NOATTRIB, 0, CCheckTransmitInfo **, int, CBitVec<16384> &, CBitVec<16384> &, const Entity2Networkable_t **, const uint16 *, int, bool);
 
-SH_DECL_HOOK6_void(CServerSideClient, Connect, SH_NOATTRIB, 0, int, const char*, int, INetChannel*, uint8, uint32);
-SH_DECL_HOOK1_void(CServerSideClient, PerformDisconnection, SH_NOATTRIB, 0, ENetworkDisconnectionReason);
-SH_DECL_HOOK1(CServerSideClientBase, ProcessTick, SH_NOATTRIB, 0, bool, const CNETMsg_Tick_t&);
-SH_DECL_HOOK1(CServerSideClientBase, ProcessStringCmd, SH_NOATTRIB, 0, bool, const CNETMsg_StringCmd_t&);
 
-SH_DECL_HOOK8_void(IGameEventSystem, PostEventAbstract, SH_NOATTRIB, 0, CSplitScreenSlot, bool, int, const uint64 *, INetworkMessageInternal *, const CNetMessage *, unsigned long, NetChannelBufType_t);
-SH_DECL_HOOK3(IVEngineServer2, SetClientListening, SH_NOATTRIB, 0, bool, CPlayerSlot, CPlayerSlot, bool);
 
-SH_DECL_HOOK3_void(ICvar, DispatchConCommand, SH_NOATTRIB, 0, ConCommandRef, const CCommandContext&, const CCommand&);
-SH_DECL_HOOK2(IGameEventManager2, FireEvent, SH_NOATTRIB, 0, bool, IGameEvent*, bool);
-SH_DECL_HOOK1_void(IGameSystem, BuildGameSessionManifest, SH_NOATTRIB, false, const EventBuildGameSessionManifest_t&);
 
-SH_DECL_MANUALHOOK1(OnTakeDamage_Alive, 0, 0, 0, bool, CTakeDamageInfoContainer *);
 
 struct SndOpEventGuid_t;
 void (*UTIL_Remove)(CEntityInstance*) = nullptr;
@@ -714,46 +990,8 @@ bool Menus::Load(PluginId id, ISmmAPI* ismm, char* error, size_t maxlen, bool la
 	GET_V_IFACE_CURRENT(GetEngineFactory, g_pNetworkServerService, INetworkServerService, NETWORKSERVERSERVICE_INTERFACE_VERSION);
 	GET_V_IFACE_CURRENT(GetEngineFactory, g_pGameResourceServiceServer, IGameResourceService, GAMERESOURCESERVICESERVER_INTERFACE_VERSION);
 
-	SH_ADD_HOOK_MEMFUNC(ICvar, DispatchConCommand, g_pCVar, this, &Menus::OnDispatchConCommand, false);
-	SH_ADD_HOOK(IServerGameDLL, GameFrame, g_pSource2Server, SH_MEMBER(this, &Menus::GameFrame), true);
-	SH_ADD_HOOK(IServerGameDLL, GameServerSteamAPIActivated, g_pSource2Server, SH_MEMBER(this, &Menus::OnGameServerSteamAPIActivated), false);
-	SH_ADD_HOOK(IServerGameDLL, PreWorldUpdate, g_pSource2Server, SH_MEMBER(this, &Menus::OnPreWorldUpdate), false);
-	SH_ADD_HOOK(IServerGameDLL, ServerHibernationUpdate, g_pSource2Server, SH_MEMBER(this, &Menus::OnServerHibernationUpdate), false);
-	SH_ADD_HOOK(IServerGameDLL, GameServerSteamAPIDeactivated, g_pSource2Server, SH_MEMBER(this, &Menus::OnGameServerSteamAPIDeactivated), false);
-	SH_ADD_HOOK(IServerGameDLL, OnHostNameChanged, g_pSource2Server, SH_MEMBER(this, &Menus::OnHostNameChanged), false);
-	SH_ADD_HOOK(IServerGameDLL, PreFatalShutdown, g_pSource2Server, SH_MEMBER(this, &Menus::OnPreFatalShutdown), false);
-	SH_ADD_HOOK(IServerGameDLL, UpdateWhenNotInGame, g_pSource2Server, SH_MEMBER(this, &Menus::OnUpdateWhenNotInGame), false);
-	SH_ADD_HOOK(IServerGameDLL, ServerConVarChanged, g_pSource2Server, SH_MEMBER(this, &Menus::OnServerConVarChanged), false);
-	SH_ADD_HOOK(IGameEventSystem, PostEventAbstract, g_gameEventSystem, SH_MEMBER(this, &Menus::OnPostEventAbstract), false);
-	SH_ADD_HOOK(IVEngineServer2, SetClientListening, engine, SH_MEMBER(this, &Menus::OnSetClientListening), false);
+	PisexKHookBridge::Install(g_pSource2Server, g_pSource2GameClients, g_pCVar, g_gameEventSystem, engine, g_pNetworkServerService, g_pSource2GameEntities);
 
-	SH_ADD_HOOK_MEMFUNC(ICvar, DispatchConCommand, g_pCVar, this, &Menus::OnDispatchConCommandPost, true);
-	SH_ADD_HOOK(IServerGameDLL, GameFrame, g_pSource2Server, SH_MEMBER(this, &Menus::OnGameFramePost), true);
-	SH_ADD_HOOK(IServerGameDLL, PreWorldUpdate, g_pSource2Server, SH_MEMBER(this, &Menus::OnPreWorldUpdatePost), true);
-	SH_ADD_HOOK(IServerGameDLL, ServerHibernationUpdate, g_pSource2Server, SH_MEMBER(this, &Menus::OnServerHibernationUpdatePost), true);
-	SH_ADD_HOOK(IServerGameDLL, GameServerSteamAPIActivated, g_pSource2Server, SH_MEMBER(this, &Menus::OnGameServerSteamAPIActivatedPost), true);
-	SH_ADD_HOOK(IServerGameDLL, GameServerSteamAPIDeactivated, g_pSource2Server, SH_MEMBER(this, &Menus::OnGameServerSteamAPIDeactivatedPost), true);
-	SH_ADD_HOOK(IServerGameDLL, OnHostNameChanged, g_pSource2Server, SH_MEMBER(this, &Menus::OnHostNameChangedPost), true);
-	SH_ADD_HOOK(IServerGameDLL, PreFatalShutdown, g_pSource2Server, SH_MEMBER(this, &Menus::OnPreFatalShutdownPost), true);
-	SH_ADD_HOOK(IServerGameDLL, UpdateWhenNotInGame, g_pSource2Server, SH_MEMBER(this, &Menus::OnUpdateWhenNotInGamePost), true);
-	SH_ADD_HOOK(IServerGameDLL, ServerConVarChanged, g_pSource2Server, SH_MEMBER(this, &Menus::OnServerConVarChangedPost), true);
-	SH_ADD_HOOK(IGameEventSystem, PostEventAbstract, g_gameEventSystem, SH_MEMBER(this, &Menus::OnPostEventAbstractPost), true);
-	SH_ADD_HOOK(IVEngineServer2, SetClientListening, engine, SH_MEMBER(this, &Menus::OnSetClientListeningPost), true);
-	SH_ADD_HOOK(IServerGameClients, ClientCommand, g_pSource2GameClients, SH_MEMBER(this, &Menus::ClientCommand), false);
-	SH_ADD_HOOK(INetworkServerService, StartupServer, g_pNetworkServerService, SH_MEMBER(this, &Menus::StartupServer), true);
-	SH_ADD_HOOK(IServerGameClients, ClientDisconnect, g_pSource2GameClients, SH_MEMBER(this, &Menus::OnClientDisconnect), true);
-	SH_ADD_HOOK(IServerGameClients, ClientPutInServer, g_pSource2GameClients, SH_MEMBER(this, &Menus::OnClientPutInServer), true);
-	SH_ADD_HOOK(IServerGameClients, OnClientConnected, g_pSource2GameClients, SH_MEMBER(this, &Menus::OnClientConnected), false);
-	SH_ADD_HOOK(IServerGameClients, ClientConnect, g_pSource2GameClients, SH_MEMBER(this, &Menus::OnClientConnect), false );	
-	SH_ADD_HOOK(ISource2GameEntities, CheckTransmit, g_pSource2GameEntities, SH_MEMBER(this, &Menus::OnCheckTransmit), true);
-	SH_ADD_HOOK(IServerGameClients, ClientSvcUserMessage, g_pSource2GameClients, SH_MEMBER(this, &Menus::OnClientSvcUserMessage), false);
-	SH_ADD_HOOK(IServerGameClients, ClientActive, g_pSource2GameClients, SH_MEMBER(this, &Menus::OnClientActive), true);
-	SH_ADD_HOOK(IServerGameClients, ClientFullyConnect, g_pSource2GameClients, SH_MEMBER(this, &Menus::OnClientFullyConnect), true);
-	SH_ADD_HOOK(IServerGameClients, ClientSettingsChanged, g_pSource2GameClients, SH_MEMBER(this, &Menus::OnClientSettingsChanged), false);
-	SH_ADD_HOOK(IServerGameClients, ProcessUsercmds, g_pSource2GameClients, SH_MEMBER(this, &Menus::OnProcessUsercmds), false);
-	SH_ADD_HOOK(IServerGameClients, ClientVoice, g_pSource2GameClients, SH_MEMBER(this, &Menus::OnClientVoice), false);
-	SH_ADD_HOOK(IServerGameClients, ClientCommandKeyValues, g_pSource2GameClients, SH_MEMBER(this, &Menus::OnClientCommandKeyValues), false);
-	// SH_ADD_HOOK(IServerGameClients, ProcessClientVoiceData, g_pSource2GameClients, SH_MEMBER(this, &Menus::OnProcessClientVoiceData), false);
 	
 	ConVar_Register(FCVAR_RELEASE | FCVAR_CLIENT_CAN_EXECUTE | FCVAR_GAMEDLL);
 
@@ -1064,26 +1302,16 @@ bool Menus::Load(PluginId id, ISmmAPI* ismm, char* error, size_t maxlen, bool la
 	g_iRespawn = g_kvSigs->GetInt("Respawn", 0);
 	g_iDropWeapon = g_kvSigs->GetInt("DropWeapon", 0);
 	g_iRemoveWeapons = g_kvSigs->GetInt("RemoveWeapons", 0);
-	void* pCCSPlayerPawnVTable = libserver.GetVirtualTableByName("CCSPlayerPawn");
-	if (!pCCSPlayerPawnVTable)
-	{
-		g_pUtilsApi->ErrorLog("[%s] Failed to find CCSPlayerPawn vtable", g_PLAPI->GetLogTag());
-	}
-	else
-	{
-		SH_MANUALHOOK_RECONFIGURE(OnTakeDamage_Alive, g_kvSigs->GetInt("OnTakeDamage_Alive"), 0, 0);
-		g_iOnTakeDamageAliveId = SH_ADD_MANUALDVPHOOK(OnTakeDamage_Alive, pCCSPlayerPawnVTable, SH_MEMBER(this, &Menus::Hook_OnTakeDamage_Alive), false);
-	}
-
-
-	CServerSideClient* pCServerSideClientVTable = libengine.GetVirtualTableByName("CServerSideClient").RCast<CServerSideClient*>();
-	g_iOnClientConnectHook = SH_ADD_DVPHOOK(CServerSideClient, Connect, pCServerSideClientVTable, SH_MEMBER(this, &Menus::OnServerSideClientClientConnect), true);
-	g_iOnClientPerformDisconnectionHook = SH_ADD_DVPHOOK(CServerSideClient, PerformDisconnection, pCServerSideClientVTable, SH_MEMBER(this, &Menus::OnCServerSideClientlientPerformDisconnection), false);
-	g_iProcessTickHook = SH_ADD_DVPHOOK(CServerSideClientBase, ProcessTick, pCServerSideClientVTable, SH_MEMBER(this, &Menus::OnProcessTick), false);
-	g_iProcessStringCmdHook = SH_ADD_DVPHOOK(CServerSideClientBase, ProcessStringCmd, pCServerSideClientVTable, SH_MEMBER(this, &Menus::OnProcessStringCmd), false);
-
-	IGameSystem* pCEntityDebugGameSystem = libserver.GetVirtualTableByName("CEntityDebugGameSystem").RCast<IGameSystem*>();
-	m_iBuildGameSessionManifestHookID = SH_ADD_DVPHOOK(IGameSystem, BuildGameSessionManifest, pCEntityDebugGameSystem, SH_MEMBER(this, &Menus::OnBuildGameSessionManifest), true);
+	// KHook dynamic-vtable registration (no SourceHook manual hooks).
+	void* pawnVTable = libserver.GetVirtualTableByName("CCSPlayerPawn");
+	if (pawnVTable)
+		PisexKHookBridge::InstallPawn(pawnVTable, g_kvSigs->GetInt("OnTakeDamage_Alive"));
+	else g_pUtilsApi->ErrorLog("[Pisex KHook] CCSPlayerPawn vtable not found");
+	void* clientVTable = libengine.GetVirtualTableByName("CServerSideClient");
+	if (clientVTable) PisexKHookBridge::InstallServerClient(clientVTable);
+	else g_pUtilsApi->ErrorLog("[Pisex KHook] CServerSideClient vtable not found");
+	void* systemVTable = libserver.GetVirtualTableByName("CEntityDebugGameSystem");
+	if (systemVTable) PisexKHookBridge::InstallGameSystem(systemVTable);
 
 	const char* pszGameEventManager = g_kvSigs->GetString("GetGameEventManager");
 	if(pszGameEventManager && pszGameEventManager[0]) {
@@ -1094,8 +1322,7 @@ bool Menus::Load(PluginId id, ISmmAPI* ismm, char* error, size_t maxlen, bool la
 		else
 		{
 			gameeventmanager = gameEventManagerFn.ResolveRelativeAddress(0x3, 0x7).GetValue<IGameEventManager2*>();
-			SH_ADD_HOOK(IGameEventManager2, FireEvent, gameeventmanager, SH_MEMBER(this, &Menus::FireEvent), false);
-			SH_ADD_HOOK(IGameEventManager2, FireEvent, gameeventmanager, SH_MEMBER(this, &Menus::OnFireEventPost), true);
+			if (gameeventmanager) PisexKHookBridge::InstallEventManager(gameeventmanager);
 		}
 	}
 
@@ -1232,108 +1459,63 @@ void Menus::OnBuildGameSessionManifest(const EventBuildGameSessionManifest_t& ms
     }
 }
 
-bool Menus::Hook_OnTakeDamage_Alive(CTakeDamageInfoContainer *pInfoContainer)
+bool Menus::Hook_OnTakeDamage_Alive(CCSPlayerPawn *pPawn, CTakeDamageInfoContainer *pInfoContainer)
 {
-	CCSPlayerPawn *pPawn = META_IFACEPTR(CCSPlayerPawn);
-	if(!pPawn) RETURN_META_VALUE(MRES_IGNORED, true);
+
+	if(!pPawn) return true;
 	CBasePlayerController* pPlayerController = pPawn->m_hController();
     if (pPlayerController)
 	{
     	int iPlayerSlot = pPlayerController->GetEntityIndex().Get() - 1;
 		g_pUtilsApi->SendHookOnTakeDamage(iPlayerSlot, pInfoContainer);
 	}
-	RETURN_META_VALUE(MRES_IGNORED, true);
+	return true;
 }
 
-void Menus::OnServerSideClientClientConnect(int socket, const char* pszName, int nUserID, INetChannel* pNetChannel, uint8 nConnectionTypeFlags, uint32 uChallengeNumber)
+void Menus::OnServerSideClientClientConnect(CServerSideClient* pClient, int socket, const char* pszName, int nUserID, INetChannel* pNetChannel, uint8 nConnectionTypeFlags, uint32 uChallengeNumber)
 {
-	CServerSideClient* pClient = META_IFACEPTR(CServerSideClient);
-	if(!pClient) RETURN_META(MRES_IGNORED);
+
+	if(!pClient) return;
 	int iSlot = pClient->GetPlayerSlot().Get();
 	if(iSlot >= 0 && iSlot < 64)
 		g_pPlayersApi->OnClientSessionStart(iSlot);
-	RETURN_META(MRES_IGNORED);
+	return;
 }
 
-void Menus::OnCServerSideClientlientPerformDisconnection(ENetworkDisconnectionReason reason)
+void Menus::OnCServerSideClientlientPerformDisconnection(CServerSideClient* pClient, ENetworkDisconnectionReason reason)
 {
-	CServerSideClient* pClient = META_IFACEPTR(CServerSideClient);
-	if(!pClient) RETURN_META(MRES_IGNORED);
+
+	if(!pClient) return;
 	int iSlot = pClient->GetPlayerSlot().Get();
 	if(iSlot >= 0 && iSlot < 64)
 		g_pPlayersApi->OnClientSessionEnd(iSlot);
-	RETURN_META(MRES_IGNORED);
+	return;
 }
 
-bool Menus::OnProcessTick(const CNETMsg_Tick_t& msg)
+bool Menus::OnProcessTick(CServerSideClientBase* pClient, const CNETMsg_Tick_t& msg)
 {
-	CServerSideClientBase* pClient = META_IFACEPTR(CServerSideClientBase);
-	if(!pClient) RETURN_META_VALUE(MRES_IGNORED, true);
+
+	if(!pClient) return true;
 	int iSlot = pClient->GetPlayerSlot().Get();
 	if(iSlot >= 0 && iSlot < 64 && !g_pPlayersApi->ProcessTick(iSlot, msg))
-		RETURN_META_VALUE(MRES_SUPERCEDE, false);
-	RETURN_META_VALUE(MRES_IGNORED, true);
+		return false;
+	return true;
 }
 
-bool Menus::OnProcessStringCmd(const CNETMsg_StringCmd_t& msg)
+bool Menus::OnProcessStringCmd(CServerSideClientBase* pClient, const CNETMsg_StringCmd_t& msg)
 {
-	CServerSideClientBase* pClient = META_IFACEPTR(CServerSideClientBase);
-	if(!pClient) RETURN_META_VALUE(MRES_IGNORED, true);
+
+	if(!pClient) return true;
 	int iSlot = pClient->GetPlayerSlot().Get();
 	if(iSlot >= 0 && iSlot < 64 && !g_pPlayersApi->ProcessStringCmd(iSlot, msg))
-		RETURN_META_VALUE(MRES_SUPERCEDE, false);
-	RETURN_META_VALUE(MRES_IGNORED, true);
+		return false;
+	return true;
 }
 
 bool Menus::Unload(char *error, size_t maxlen)
 {
-	SH_REMOVE_HOOK_MEMFUNC(ICvar, DispatchConCommand, g_pCVar, this, &Menus::OnDispatchConCommand, false);
-	SH_REMOVE_HOOK(IServerGameDLL, GameFrame, g_pSource2Server, SH_MEMBER(this, &Menus::GameFrame), true);
-	SH_REMOVE_HOOK(IGameEventManager2, FireEvent, gameeventmanager, SH_MEMBER(this, &Menus::FireEvent), false);
-	SH_REMOVE_HOOK(IGameEventManager2, FireEvent, gameeventmanager, SH_MEMBER(this, &Menus::OnFireEventPost), true);
-	SH_REMOVE_HOOK(IServerGameClients, ClientCommand, g_pSource2GameClients, SH_MEMBER(this, &Menus::ClientCommand), false);
-	SH_REMOVE_HOOK(INetworkServerService, StartupServer, g_pNetworkServerService, SH_MEMBER(this, &Menus::StartupServer), true);
-	SH_REMOVE_HOOK(IServerGameDLL, GameServerSteamAPIActivated, g_pSource2Server, SH_MEMBER(this, &Menus::OnGameServerSteamAPIActivated), false);
-	SH_REMOVE_HOOK(IServerGameDLL, PreWorldUpdate, g_pSource2Server, SH_MEMBER(this, &Menus::OnPreWorldUpdate), false);
-	SH_REMOVE_HOOK(IServerGameDLL, ServerHibernationUpdate, g_pSource2Server, SH_MEMBER(this, &Menus::OnServerHibernationUpdate), false);
-	SH_REMOVE_HOOK(IServerGameDLL, GameServerSteamAPIDeactivated, g_pSource2Server, SH_MEMBER(this, &Menus::OnGameServerSteamAPIDeactivated), false);
-	SH_REMOVE_HOOK(IServerGameDLL, OnHostNameChanged, g_pSource2Server, SH_MEMBER(this, &Menus::OnHostNameChanged), false);
-	SH_REMOVE_HOOK(IServerGameDLL, PreFatalShutdown, g_pSource2Server, SH_MEMBER(this, &Menus::OnPreFatalShutdown), false);
-	SH_REMOVE_HOOK(IServerGameDLL, UpdateWhenNotInGame, g_pSource2Server, SH_MEMBER(this, &Menus::OnUpdateWhenNotInGame), false);
-	SH_REMOVE_HOOK(IServerGameDLL, ServerConVarChanged, g_pSource2Server, SH_MEMBER(this, &Menus::OnServerConVarChanged), false);
-	SH_REMOVE_HOOK(IGameEventSystem, PostEventAbstract, g_gameEventSystem, SH_MEMBER(this, &Menus::OnPostEventAbstract), false);
-	SH_REMOVE_HOOK(IVEngineServer2, SetClientListening, engine, SH_MEMBER(this, &Menus::OnSetClientListening), false);
-	SH_REMOVE_HOOK_MEMFUNC(ICvar, DispatchConCommand, g_pCVar, this, &Menus::OnDispatchConCommandPost, true);
-	SH_REMOVE_HOOK(IServerGameDLL, GameFrame, g_pSource2Server, SH_MEMBER(this, &Menus::OnGameFramePost), true);
-	SH_REMOVE_HOOK(IServerGameDLL, PreWorldUpdate, g_pSource2Server, SH_MEMBER(this, &Menus::OnPreWorldUpdatePost), true);
-	SH_REMOVE_HOOK(IServerGameDLL, ServerHibernationUpdate, g_pSource2Server, SH_MEMBER(this, &Menus::OnServerHibernationUpdatePost), true);
-	SH_REMOVE_HOOK(IServerGameDLL, GameServerSteamAPIActivated, g_pSource2Server, SH_MEMBER(this, &Menus::OnGameServerSteamAPIActivatedPost), true);
-	SH_REMOVE_HOOK(IServerGameDLL, GameServerSteamAPIDeactivated, g_pSource2Server, SH_MEMBER(this, &Menus::OnGameServerSteamAPIDeactivatedPost), true);
-	SH_REMOVE_HOOK(IServerGameDLL, OnHostNameChanged, g_pSource2Server, SH_MEMBER(this, &Menus::OnHostNameChangedPost), true);
-	SH_REMOVE_HOOK(IServerGameDLL, PreFatalShutdown, g_pSource2Server, SH_MEMBER(this, &Menus::OnPreFatalShutdownPost), true);
-	SH_REMOVE_HOOK(IServerGameDLL, UpdateWhenNotInGame, g_pSource2Server, SH_MEMBER(this, &Menus::OnUpdateWhenNotInGamePost), true);
-	SH_REMOVE_HOOK(IServerGameDLL, ServerConVarChanged, g_pSource2Server, SH_MEMBER(this, &Menus::OnServerConVarChangedPost), true);
-	SH_REMOVE_HOOK(IGameEventSystem, PostEventAbstract, g_gameEventSystem, SH_MEMBER(this, &Menus::OnPostEventAbstractPost), true);
-	SH_REMOVE_HOOK(IVEngineServer2, SetClientListening, engine, SH_MEMBER(this, &Menus::OnSetClientListeningPost), true);
-	SH_REMOVE_HOOK(IServerGameClients, ClientDisconnect, g_pSource2GameClients, SH_MEMBER(this, &Menus::OnClientDisconnect), true);
-	SH_REMOVE_HOOK(IServerGameClients, ClientPutInServer, g_pSource2GameClients, SH_MEMBER(this, &Menus::OnClientPutInServer), true);
-	SH_REMOVE_HOOK(IServerGameClients, OnClientConnected, g_pSource2GameClients, SH_MEMBER(this, &Menus::OnClientConnected), false);
-	SH_REMOVE_HOOK(IServerGameClients, ClientConnect, g_pSource2GameClients, SH_MEMBER(this, &Menus::OnClientConnect), false );
-	SH_REMOVE_HOOK(IServerGameClients, ClientActive, g_pSource2GameClients, SH_MEMBER(this, &Menus::OnClientActive), true);
-	SH_REMOVE_HOOK(IServerGameClients, ClientFullyConnect, g_pSource2GameClients, SH_MEMBER(this, &Menus::OnClientFullyConnect), true);
-	SH_REMOVE_HOOK(IServerGameClients, ClientSettingsChanged, g_pSource2GameClients, SH_MEMBER(this, &Menus::OnClientSettingsChanged), false);
-	SH_REMOVE_HOOK(IServerGameClients, ProcessUsercmds, g_pSource2GameClients, SH_MEMBER(this, &Menus::OnProcessUsercmds), false);
-	SH_REMOVE_HOOK(IServerGameClients, ClientVoice, g_pSource2GameClients, SH_MEMBER(this, &Menus::OnClientVoice), false);
-	SH_REMOVE_HOOK(IServerGameClients, ClientCommandKeyValues, g_pSource2GameClients, SH_MEMBER(this, &Menus::OnClientCommandKeyValues), false);
-	// SH_REMOVE_HOOK(IServerGameClients, ProcessClientVoiceData, g_pSource2GameClients, SH_MEMBER(this, &Menus::OnProcessClientVoiceData), false);
-	SH_REMOVE_HOOK(IServerGameClients, ClientSvcUserMessage, g_pSource2GameClients, SH_MEMBER(this, &Menus::OnClientSvcUserMessage), false);
+	PisexKHookBridge::Uninstall(g_pSource2Server, g_pSource2GameClients, g_pCVar, g_gameEventSystem, engine, g_pNetworkServerService, g_pSource2GameEntities);
 
-	if(g_iOnTakeDamageAliveId) SH_REMOVE_HOOK_ID(g_iOnTakeDamageAliveId);
-	if(g_iOnClientConnectHook) SH_REMOVE_HOOK_ID(g_iOnClientConnectHook);
-	if(g_iOnClientPerformDisconnectionHook) SH_REMOVE_HOOK_ID(g_iOnClientPerformDisconnectionHook);
-	if(g_iProcessTickHook) SH_REMOVE_HOOK_ID(g_iProcessTickHook);
-	if(g_iProcessStringCmdHook) SH_REMOVE_HOOK_ID(g_iProcessStringCmdHook);
-	if(m_iBuildGameSessionManifestHookID) SH_REMOVE_HOOK_ID(m_iBuildGameSessionManifestHookID);
 	if(m_SayHook) funchook_destroy(m_SayHook);
 	if(m_SayTeamHook) funchook_destroy(m_SayTeamHook);
 	if(m_TakeDamageHook) funchook_destroy(m_TakeDamageHook);
@@ -1395,8 +1577,8 @@ bool Menus::OnSetClientListening(CPlayerSlot iReceiver, CPlayerSlot iSender, boo
 {
 	bool bResult = g_pUtilsApi->SendServerSetClientListening(iReceiver.Get(), iSender.Get(), bListen);
 	if(bResult != bListen)
-		RETURN_META_VALUE_NEWPARAMS(MRES_HANDLED, bResult, &IVEngineServer2::SetClientListening, (iReceiver, iSender, bResult));
-	RETURN_META_VALUE(MRES_IGNORED, bResult);
+		return bResult;
+	return bResult;
 }
 
 void Menus::OnGameFramePost(bool simulating, bool bFirstTick, bool bLastTick)
@@ -1452,7 +1634,7 @@ void Menus::OnPostEventAbstractPost(CSplitScreenSlot nSlot, bool bLocalOnly, int
 bool Menus::OnSetClientListeningPost(CPlayerSlot iReceiver, CPlayerSlot iSender, bool bListen)
 {
 	g_pUtilsApi->SendServerSetClientListeningPost(iReceiver.Get(), iSender.Get(), bListen);
-	RETURN_META_VALUE(MRES_IGNORED, bListen);
+	return bListen;
 }
 
 void Menus::OnClientConnected(CPlayerSlot slot, const char* pszName, uint64 xuid, const char* pszNetworkID, const char* pszAddress, bool bFakePlayer)
@@ -1482,8 +1664,8 @@ bool Menus::OnClientConnect( CPlayerSlot slot, const char *pszName, uint64 xuid,
 	m_Players[slot.Get()] = pPlayer;
 	UTIL_ResetPlayerSlot(slot.Get());
 	if(!g_pPlayersApi->ClientConnect(slot.Get()))
-		RETURN_META_VALUE(MRES_SUPERCEDE, false);
-	RETURN_META_VALUE(MRES_IGNORED, true);
+		return false;
+	return true;
 }
 
 void Menus::OnClientPutInServer( CPlayerSlot slot, char const *pszName, int type, uint64 xuid )
@@ -1529,8 +1711,8 @@ void Menus::OnClientCommandKeyValues( CPlayerSlot slot, KeyValues *pKeyValues )
 bool Menus::OnProcessClientVoiceData( CPlayerSlot slot, void *pVoiceInfo )
 {
 	if(!g_pPlayersApi->ProcessClientVoiceData(slot.Get(), pVoiceInfo))
-		RETURN_META_VALUE(MRES_SUPERCEDE, false);
-	RETURN_META_VALUE(MRES_IGNORED, true);
+		return false;
+	return true;
 }
 
 void Menus::OnValidateAuthTicketHook(ValidateAuthTicketResponse_t *pResponse)
@@ -1601,10 +1783,10 @@ void UtilsApi::LoadTranslations(const char* FileName)
 		g_vecPhrases[std::string(pKey->GetName())] = std::string(pKey->GetString(szLanguage));
 }
 
-bool Menus::FireEvent(IGameEvent* pEvent, bool bDontBroadcast)
+bool Menus::FireEvent(IGameEvent* pEvent, bool& bDontBroadcast)
 {
     if (!pEvent) {
-        RETURN_META_VALUE(MRES_IGNORED, false);
+        return true;
     }
 
     const char* szName = pEvent->GetName();
@@ -1617,21 +1799,27 @@ bool Menus::FireEvent(IGameEvent* pEvent, bool bDontBroadcast)
 	EventHookResult result = g_pUtilsApi->SendEventHookPre(szName, pEvent, &info);
 
 	if(result >= EventHookResult::Handled) {
+        if (!m_EventCopies.empty()) {
+            IGameEvent* pCopy = m_EventCopies.top();
+            m_EventCopies.pop();
+            if (pCopy) gameeventmanager->FreeEvent(pCopy);
+        }
 		gameeventmanager->FreeEvent(pEvent);
-		RETURN_META_VALUE(MRES_SUPERCEDE, false);
+		return false;
 	}
 
 	if(info.bDontBroadcast != bDontBroadcast) {
-		RETURN_META_VALUE_NEWPARAMS(MRES_IGNORED, true, &IGameEventManager2::FireEvent, (pEvent, info.bDontBroadcast));
+		bDontBroadcast = info.bDontBroadcast;
+		return true;
 	}
 
-	RETURN_META_VALUE(MRES_IGNORED, true);
+	return true;
 }
 
 bool Menus::OnFireEventPost(IGameEvent* pEvent, bool bDontBroadcast)
 {
 	if(m_EventCopies.empty()) {
-		RETURN_META_VALUE(MRES_IGNORED, true);
+		return true;
 	}
 	IGameEvent* pCopy = m_EventCopies.top();
 	m_EventCopies.pop();
@@ -1640,7 +1828,7 @@ bool Menus::OnFireEventPost(IGameEvent* pEvent, bool bDontBroadcast)
 		g_pUtilsApi->SendEventHookPost(pCopy->GetName(), pCopy, bDontBroadcast);
 		gameeventmanager->FreeEvent(pCopy);
 	}
-	RETURN_META_VALUE(MRES_IGNORED, true);
+	return true;
 }
 
 void Menus::GameFrame(bool simulating, bool bFirstTick, bool bLastTick)
@@ -1690,11 +1878,12 @@ void Menus::GameFrame(bool simulating, bool bFirstTick, bool bLastTick)
 	}
 }
 
-void Menus::ClientCommand(CPlayerSlot slot, const CCommand &args)
+bool Menus::ClientCommand(CPlayerSlot slot, const CCommand &args)
 {
 	g_pPlayersApi->ClientCommand(slot.Get(), args);
 	bool bFound = g_pUtilsApi->FindAndSendCommandCallback(args.Arg(0), slot.Get(), args.ArgS(), true);
-	if(bFound) RETURN_META(MRES_SUPERCEDE);
+	if(bFound) return true;
+	return false;
 }
 
 std::string StripQuotes(const std::string& str) {
@@ -1720,14 +1909,14 @@ std::vector<std::string> SplitStringBySpace(const std::string& input) {
 	return tokens;
 }
 
-void Menus::OnDispatchConCommand(ConCommandRef cmdHandle, const CCommandContext& ctx, const CCommand& args)
+bool Menus::OnDispatchConCommand(ConCommandRef cmdHandle, const CCommandContext& ctx, const CCommand& args)
 {
 	if (!g_pEntitySystem)
-		return;
+		return false;
 
 	auto iCommandPlayerSlot = ctx.GetPlayerSlot();
 	if(!g_pUtilsApi->SendServerDispatchConCommand(iCommandPlayerSlot.Get(), args))
-		RETURN_META(MRES_SUPERCEDE);
+		return true;
 	bool bSay = !V_strcmp(args.Arg(0), "say");
 	bool bTeamSay = !V_strcmp(args.Arg(0), "say_team");
 	int iSlot = iCommandPlayerSlot.Get();
@@ -1747,7 +1936,7 @@ void Menus::OnDispatchConCommand(ConCommandRef cmdHandle, const CCommandContext&
 						{
 						int iButton = atoi(tokens[0].c_str());
 						if (CheckActionMenu(iSlot, pController, iButton))
-							RETURN_META(MRES_SUPERCEDE);
+							return true;
 					}
 				}
 			}
@@ -1762,14 +1951,14 @@ void Menus::OnDispatchConCommand(ConCommandRef cmdHandle, const CCommandContext&
 			{
 				const char* arg0 = tokens[0].c_str();
 				bool bFound = g_pUtilsApi->FindAndSendCommandCallback(arg0, iSlot, pszMessage, false);
-				if (bFound) RETURN_META(MRES_SUPERCEDE);
+				if (bFound) return true;
 				else if (g_vCommandEater.size() > 0 && g_pUtilsApi->FindCommand(arg0))
 				{
 					for (auto& command : g_vCommandEater)
 					{
 						if (arg0[0] == command[0])
 						{
-							RETURN_META(MRES_SUPERCEDE);
+							return true;
 						}
 					}
 				}
@@ -1777,8 +1966,9 @@ void Menus::OnDispatchConCommand(ConCommandRef cmdHandle, const CCommandContext&
 		}
 	} else {
 		bool bFound = g_pUtilsApi->FindAndSendCommandCallback(args.Arg(0), iSlot, args.ArgS(), true);
-		if (bFound) RETURN_META(MRES_SUPERCEDE);
+		if (bFound) return true;
 	}
+	return false;
 }
 
 void Menus::OnDispatchConCommandPost(ConCommandRef cmdHandle, const CCommandContext& ctx, const CCommand& args)
