@@ -159,7 +159,7 @@ private:
 	void OnClientActive( CPlayerSlot slot, bool bLoadGame, char const *pszName, uint64 xuid );
 	void OnClientFullyConnect( CPlayerSlot slot );
 	void OnClientSettingsChanged( CPlayerSlot slot );
-	void OnProcessUsercmds( CPlayerSlot slot, const CCLCMsg_Move_t &msg, bool paused );
+	void OnProcessUsercmds( CPlayerSlot slot, const CNetMessagePB<CCLCMsg_Move>&msg, bool paused );
 	void OnClientVoice( CPlayerSlot slot );
 	void OnClientCommandKeyValues( CPlayerSlot slot, KeyValues *pKeyValues );
 	bool OnProcessClientVoiceData( CPlayerSlot slot, void *pVoiceInfo );
@@ -1025,7 +1025,7 @@ public:
 		for (auto& item : m_Listeners)
 			if (item.second) item.second->ClientSettingsChanged(iSlot);
 	}
-	void ProcessUsercmds(int iSlot, const CCLCMsg_Move_t &msg, bool paused) {
+	void ProcessUsercmds(int iSlot, const CNetMessagePB<CCLCMsg_Move>&msg, bool paused) {
 		for (auto& item : m_Listeners)
 			if (item.second) item.second->ProcessUsercmds(iSlot, msg, paused);
 	}

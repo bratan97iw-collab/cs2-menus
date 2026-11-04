@@ -6,6 +6,7 @@
 #include "metamod_oslink.h"
 #include "schemasystem/schemasystem.h"
 #include <serversideclient.h>
+#include <globaltypes.h>
 #include <iostream>
 #include <iomanip>
 #include <ctime>
@@ -172,7 +173,7 @@ struct PisexKHookBridge {
         return {KHook::Action::Ignore};
     }
 
-    static KHook::Return<void> ProcessUsercmdsCallback(IServerGameClients*, CPlayerSlot slot, const CCLCMsg_Move_t& msg, bool paused) {
+    static KHook::Return<void> ProcessUsercmdsCallback(IServerGameClients*, CPlayerSlot slot, const CNetMessagePB<CCLCMsg_Move>& msg, bool paused) {
         g_Menus.OnProcessUsercmds(slot, msg, paused);
         return {KHook::Action::Ignore};
     }
@@ -376,7 +377,7 @@ struct PisexKHookBridge {
         &IServerGameClients::ClientFullyConnect, nullptr, &PisexKHookBridge::ClientFullyConnectCallback};
     inline static KHook::Virtual<IServerGameClients, void, CPlayerSlot> clientSettingsChanged{
         &IServerGameClients::ClientSettingsChanged, &PisexKHookBridge::ClientSettingsChangedCallback, nullptr};
-    inline static KHook::Virtual<IServerGameClients, void, CPlayerSlot, const CCLCMsg_Move_t&, bool> processUsercmds{
+    inline static KHook::Virtual<IServerGameClients, void, CPlayerSlot, const CNetMessagePB<CCLCMsg_Move>&, bool> processUsercmds{
         &IServerGameClients::ProcessUsercmds, &PisexKHookBridge::ProcessUsercmdsCallback, nullptr};
     inline static KHook::Virtual<IServerGameClients, void, CPlayerSlot> clientVoice{
         &IServerGameClients::ClientVoice, &PisexKHookBridge::ClientVoiceCallback, nullptr};
@@ -873,7 +874,11 @@ void Menus::OnCheckTransmit(CCheckTransmitInfo **pInfoInfoList, int nInfoCount, 
 	for (int i = 0; i < nInfoCount; i++)
 	{
 		auto &pInfo = pInfoInfoList[i];
-		int iPlayerSlot = pInfo->m_nPlayerSlot;
+		// The public SDK CCheckTransmitInfo exposes only transmission masks.
+        // Pisex SchemaEntity provides a compatibility view of its client slot.
+        // Revalidate this layout against the actual game build before production use.
+        int iPlayerSlot = reinterpret_cast<const CCheckTransmitInfoHack*>(pInfo)->m_nPlayerSlot;
+        if (iPlayerSlot < 0 || iPlayerSlot >= 64) continue;
 
 		CCSPlayerController* pSelfController = CCSPlayerController::FromSlot(iPlayerSlot);
 		if (!pSelfController) continue;
@@ -1700,7 +1705,7 @@ void Menus::OnClientSettingsChanged( CPlayerSlot slot )
 	g_pPlayersApi->ClientSettingsChanged(slot.Get());
 }
 
-void Menus::OnProcessUsercmds( CPlayerSlot slot, const CCLCMsg_Move_t &msg, bool paused )
+void Menus::OnProcessUsercmds( CPlayerSlot slot, const CNetMessagePB<CCLCMsg_Move>&msg, bool paused )
 {
 	g_pPlayersApi->ProcessUsercmds(slot.Get(), msg, paused);
 }

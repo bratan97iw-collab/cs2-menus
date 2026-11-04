@@ -10,7 +10,8 @@ class CTakeDamageInfo;
 class IGameEventListener2;
 class CCommand;
 class KeyValues;
-class CCLCMsg_Move_t;
+class CCLCMsg_Move;
+template <typename PROTO_TYPE> class CNetMessagePB;
 class CNETMsg_Tick_t;
 class CNETMsg_StringCmd_t;
 
@@ -48,7 +49,7 @@ public:
 
     virtual void ClientCommand(int iSlot, const CCommand &args) { };
 	virtual void ClientSettingsChanged(int iSlot) { };
-	virtual void ProcessUsercmds(int iSlot, const CCLCMsg_Move_t &msg, bool paused) { };
+	virtual void ProcessUsercmds(int iSlot, const CNetMessagePB<CCLCMsg_Move>&msg, bool paused) { };
 	virtual void ClientVoice(int iSlot) { };
 	virtual void ClientCommandKeyValues(int iSlot, KeyValues *pKeyValues) { };
 	virtual void ClientSvcUserMessage(int iSlot, int um_type, uint32 size, const void *buf) { };
