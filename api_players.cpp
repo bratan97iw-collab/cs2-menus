@@ -1,5 +1,7 @@
 #include "utils.h"
 #include "menus_internal.h"
+#include <memory>
+#include <utility>
 
 void PlayersApi::CommitSuicide(int iSlot, bool bExplode, bool bForce)
 {
@@ -159,7 +161,7 @@ int PlayersApi::FindPlayer(const CSteamID* steamID)
 	int iSlot = -1;
 	for(int i = 0; i < 64; i++)
 	{
-		if(m_Players[i] && m_Players[i]->GetSteamId() == steamID)
+		if(steamID && m_Players[i] && m_Players[i]->GetSteamId64() == steamID->ConvertToUint64())
 		{
 			iSlot = i;
 			break;
@@ -180,7 +182,8 @@ int PlayersApi::FindPlayer(const char* szName)
 	int iSlot = -1;
 	for(int i = 0; i < 64; i++)
 	{
-		if(ToLowerCase(engine->GetClientConVarValue(i, "name")) == ToLowerCase(szName))
+		const char* playerName = engine->GetClientConVarValue(i, "name");
+        if(playerName && szName && ToLowerCase(playerName) == ToLowerCase(szName))
 		{
 			iSlot = i;
 			break;
@@ -189,44 +192,47 @@ int PlayersApi::FindPlayer(const char* szName)
 	return iSlot;
 }
 
+// CS2 SDK API18: game-allocated CNetMessage, backed by a protobuf payload.
+// Do not construct CNetMessagePB directly: its internal metadata is game-owned.
 void PlayersApi::SetConVars(std::vector<int> vPlayers, std::vector<FakeConVar> cvars)
 {
-	static INetworkMessageInternal* netmsg = g_pNetworkMessages->FindNetworkMessagePartial("CNETMsg_SetConVar");
-	std::unique_ptr<CNETMsg_SetConVar_t> msg(netmsg->AllocateMessage()->As<CNETMsg_SetConVar_t>());
-	
-	for (const auto& cvar : cvars) {
-		CMsg_CVars_CVar *cvarEntry = msg->mutable_convars()->add_cvars();
-		cvarEntry->set_name(cvar.szCvar.c_str());
-		cvarEntry->set_value(cvar.szValue.c_str());
-	}
+    if (!g_pNetworkMessages || !g_gameEventSystem || vPlayers.empty() || cvars.empty())
+        return;
 
-	CPlayerBitVec recipients;
-	for (auto i : vPlayers) {
-		recipients.Set(i);
-	}
-	
-	g_gameEventSystem->PostEventAbstract(-1, false, ABSOLUTE_PLAYER_LIMIT, reinterpret_cast<const uint64*>(recipients.Base()), netmsg, msg.get(), 0, NetChannelBufType_t::BUF_RELIABLE);
-	// msg->Send(recipients);
-	// delete msg;
+    static INetworkMessageInternal* netmsg =
+        g_pNetworkMessages->FindNetworkMessagePartial("CNETMsg_SetConVar");
+    if (!netmsg)
+        return;
+
+    std::unique_ptr<CNetMessage> msg(netmsg->AllocateMessage());
+    if (!msg)
+        return;
+
+    // SDK netmessage.h documents ToPB<T>() for game-allocated messages.
+    auto* pb = msg->ToPB<CNETMsg_SetConVar>();
+    for (const auto& cvar : cvars)
+    {
+        CMsg_CVars_CVar* entry = pb->mutable_convars()->add_cvars();
+        entry->set_name(cvar.szCvar);
+        entry->set_value(cvar.szValue);
+    }
+
+    CRecipientFilter filter;
+    for (int slot : vPlayers)
+        if (slot >= 0 && slot < ABSOLUTE_PLAYER_LIMIT)
+            filter.AddRecipient(slot);
+
+    g_gameEventSystem->PostEventAbstract(-1, false, &filter, netmsg, msg.get(), 0);
 }
 
 void PlayersApi::SetConVar(std::vector<int> vPlayers, const char* name, const char* value)
 {
-	static INetworkMessageInternal* netmsg = g_pNetworkMessages->FindNetworkMessagePartial("CNETMsg_SetConVar");
-	std::unique_ptr<CNETMsg_SetConVar_t> msg(netmsg->AllocateMessage()->As<CNETMsg_SetConVar_t>());
-	
-	CMsg_CVars_CVar *cvar = msg->mutable_convars()->add_cvars();
-	cvar->set_name(name);
-	cvar->set_value(value);
-
-	CPlayerBitVec recipients;
-	for (auto i : vPlayers) {
-		recipients.Set(i);
-	}
-	
-	g_gameEventSystem->PostEventAbstract(-1, false, ABSOLUTE_PLAYER_LIMIT, reinterpret_cast<const uint64*>(recipients.Base()), netmsg, msg.get(), 0, NetChannelBufType_t::BUF_RELIABLE);
-	// msg->Send(recipients);
-	// delete msg;
+    if (!name || !value)
+        return;
+    FakeConVar cvar;
+    cvar.szCvar = name;
+    cvar.szValue = value;
+    SetConVars(std::move(vPlayers), {cvar});
 }
 
 void PlayersApi::RemoveWeapons(int iSlot)
@@ -235,7 +241,7 @@ void PlayersApi::RemoveWeapons(int iSlot)
 	CCSPlayerController* pController = CCSPlayerController::FromSlot(iSlot);
 	if (!pController) return;
 	CCSPlayerPawn* pPlayerPawn = pController->GetPlayerPawn();
-	if (!pPlayerPawn && !pPlayerPawn->IsAlive()) return;
+	if (!pPlayerPawn || !pPlayerPawn->IsAlive()) return;
 	CCSPlayer_ItemServices* pItemServices = pPlayerPawn->m_pItemServices();
 	if (!pItemServices) return;
 	CALL_VIRTUAL(void, g_iRemoveWeapons, pItemServices);
@@ -259,9 +265,10 @@ void PlayersApi::TakeDamage(int iSlot, CTakeDamageInfo* pInfo, bool bHook)
 
 bool PlayersApi::UseClientCommand(int iSlot, const char* szCommand)
 {
-	if (iSlot == -1) return false;
+	if (iSlot == -1 || !szCommand || !*szCommand) return false;
 	if (iSlot < 0 || iSlot >= 64) return false;
 	auto tokens = SplitStringBySpace(szCommand);
+    if (tokens.empty()) return false;
 	std::string sCommand = "";
 	for (size_t i = 1; i < tokens.size(); ++i) {
 		sCommand += tokens[i] + " ";
