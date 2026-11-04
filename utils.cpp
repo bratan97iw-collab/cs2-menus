@@ -144,6 +144,10 @@ struct PisexKHookBridge {
     }
 
     static KHook::Return<void> ClientDisconnectCallback(IServerGameClients*, CPlayerSlot slot, ENetworkDisconnectionReason reason, const char* name, uint64 xuid, const char* networkId) {
+        // The server-side PerformDisconnection virtual was removed from this SDK.
+        // Deliver the legacy session-end event through the supported game-client callback.
+        if (g_pPlayersApi && slot.Get() >= 0 && slot.Get() < 64)
+            g_pPlayersApi->OnClientSessionEnd(slot.Get());
         g_Menus.OnClientDisconnect(slot, reason, name, xuid, networkId);
         return {KHook::Action::Ignore};
     }
@@ -303,9 +307,6 @@ struct PisexKHookBridge {
         g_Menus.OnServerSideClientClientConnect(cl,socket,name,id,connection,fakePlayer,arg6,arg7);
         return {KHook::Action::Ignore};
     }
-    static KHook::Return<void> ServerClientDisconnectPre(CServerSideClient* cl, ENetworkDisconnectionReason reason) {
-        g_Menus.OnCServerSideClientlientPerformDisconnection(cl,reason); return {KHook::Action::Ignore};
-    }
     static KHook::Return<bool> ProcessTickPre(CServerSideClientBase* cl, const CNETMsg_Tick_t& msg) {
         bool allow=g_Menus.OnProcessTick(cl,msg); return {allow ? KHook::Action::Ignore : KHook::Action::Supersede,allow};
     }
@@ -330,7 +331,6 @@ struct PisexKHookBridge {
     inline static KHook::Virtual<IGameEventManager2,bool,IGameEvent*,bool> fireEvent{&IGameEventManager2::FireEvent,&FireEventPre,&FireEventPost};
     inline static KHook::Virtual<CCSPlayerPawn,bool,CTakeDamageInfoContainer*> takeDamageAlive{std::uint32_t{0},&OnTakeDamageAlivePre,nullptr};
     inline static KHook::Virtual<CServerSideClient,void,int,const char*,int,void*,bool,int,int> clientSessionConnect{&CServerSideClient::Connect,nullptr,&ServerClientConnectPost};
-    inline static KHook::Virtual<CServerSideClient,void,ENetworkDisconnectionReason> clientSessionDisconnect{&CServerSideClient::PerformDisconnection,&ServerClientDisconnectPre,nullptr};
     inline static KHook::Virtual<CServerSideClientBase,bool,const CNETMsg_Tick_t&> processTick{&CServerSideClientBase::ProcessTick,&ProcessTickPre,nullptr};
     inline static KHook::Virtual<CServerSideClientBase,bool,const CNETMsg_StringCmd_t&> processStringCmd{&CServerSideClientBase::ProcessStringCmd,&ProcessStringCmdPre,nullptr};
     inline static KHook::Virtual<IGameSystem,void,const EventBuildGameSessionManifest_t* const> buildGameManifest{&IGameSystem::OnBuildGameSessionManifest,nullptr,&BuildGameSessionManifestPost};
@@ -341,7 +341,6 @@ struct PisexKHookBridge {
     static void InstallPawn(void* vtable,int index) { if(index<=0 || index>512) return; pawnFake[0]=vtable; takeDamageAlive.Configure(index); takeDamageAlive.AddGlobal(reinterpret_cast<CCSPlayerPawn*>(pawnFake)); }
     static void InstallServerClient(void* vtable) { serverClientFake[0]=vtable;
         clientSessionConnect.AddGlobal(reinterpret_cast<CServerSideClient*>(serverClientFake));
-        clientSessionDisconnect.AddGlobal(reinterpret_cast<CServerSideClient*>(serverClientFake));
         processTick.AddGlobal(reinterpret_cast<CServerSideClientBase*>(serverClientFake));
         processStringCmd.AddGlobal(reinterpret_cast<CServerSideClientBase*>(serverClientFake)); }
     static void InstallGameSystem(void* vtable) { gameSystemFake[0]=vtable; buildGameManifest.AddGlobal(reinterpret_cast<IGameSystem*>(gameSystemFake)); }
@@ -349,7 +348,7 @@ struct PisexKHookBridge {
     static void UninstallDynamic(IGameEventManager2* mgr) {
         if(mgr) fireEvent.RemoveGlobal(mgr);
         if(pawnFake[0]) takeDamageAlive.RemoveGlobal(reinterpret_cast<CCSPlayerPawn*>(pawnFake));
-        if(serverClientFake[0]) {clientSessionConnect.RemoveGlobal(reinterpret_cast<CServerSideClient*>(serverClientFake)); clientSessionDisconnect.RemoveGlobal(reinterpret_cast<CServerSideClient*>(serverClientFake)); processTick.RemoveGlobal(reinterpret_cast<CServerSideClientBase*>(serverClientFake)); processStringCmd.RemoveGlobal(reinterpret_cast<CServerSideClientBase*>(serverClientFake));}
+        if(serverClientFake[0]) {clientSessionConnect.RemoveGlobal(reinterpret_cast<CServerSideClient*>(serverClientFake)); processTick.RemoveGlobal(reinterpret_cast<CServerSideClientBase*>(serverClientFake)); processStringCmd.RemoveGlobal(reinterpret_cast<CServerSideClientBase*>(serverClientFake));}
         if(gameSystemFake[0]) buildGameManifest.RemoveGlobal(reinterpret_cast<IGameSystem*>(gameSystemFake));
     }
     inline static KHook::Virtual<IServerGameDLL, void, bool> preWorldUpdate{
