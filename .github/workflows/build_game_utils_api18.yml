@@ -156,6 +156,25 @@ jobs:
           sed -i '/^#include <CCSPlayerPawn.h>$/d' ../SchemaEntity/services.h
           echo "Removed circular pawn include from services.h"
 
+      - name: Restore DamageReactServices schema field
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PYSCHEMA'
+          from pathlib import Path
+
+          header = Path('../SchemaEntity/CCSPlayerPawn.h')
+          source = header.read_text()
+          field = 'SCHEMA_FIELD(CCSPlayer_DamageReactServices*, m_pDamageReactServices);'
+          anchor = 'SCHEMA_FIELD(CCSPlayer_ActionTrackingServices*, m_pActionTrackingServices);'
+          if field not in source:
+              if source.count(anchor) != 1:
+                  raise SystemExit('CCSPlayerPawn.h has changed; cannot safely insert damage services')
+              source = source.replace(anchor, anchor + '\n\t' + field, 1)
+              header.write_text(source)
+          print('DamageReactServices schema accessor is declared')
+          PYSCHEMA
+
       - name: Compile Game Utils (API 18)
         shell: bash
         working-directory: build
