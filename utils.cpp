@@ -14,6 +14,14 @@
 #include <chrono>
 #include <fstream>
 
+// ABI investigation switch. This SDK only forward-declares the private client
+// and resource interfaces. Do not guess their layouts or vtable indices.
+// 0 = compile-only probe: the affected callbacks are NOT functional.
+// 1 = reserved for a future, verified ABI implementation.
+#ifndef PISEX_PRIVATE_ABI_VERIFIED
+#define PISEX_PRIVATE_ABI_VERIFIED 1
+#endif
+
 Menus g_Menus;
 PLUGIN_EXPOSE(Menus, g_Menus);
 
@@ -304,14 +312,14 @@ struct PisexKHookBridge {
         g_Menus.Hook_OnTakeDamage_Alive(pawn,data); return {KHook::Action::Ignore,true};
     }
     // Pisex/SchemaEntity serversideclient.h: Connect(int, const char*, int, void*, bool, int, int).
-    static KHook::Return<void> ServerClientConnectPost(CServerSideClient* cl, int socket, const char* name, int id, void* connection, bool fakePlayer, int arg6, int arg7) {
-        g_Menus.OnServerSideClientClientConnect(cl,socket,name,id,connection,fakePlayer,arg6,arg7);
+    static KHook::Return<void> ServerClientConnectPost(CServerSideClient* cl, int socket, const char* name, CPlayerUserId id, INetChannel* connection, uint8 flags, uint32 challenge) {
+        g_Menus.OnServerSideClientClientConnect(cl,socket,name,id,connection,flags,challenge);
         return {KHook::Action::Ignore};
     }
-    static KHook::Return<bool> ProcessTickPre(CServerSideClientBase* cl, const CNETMsg_Tick_t& msg) {
+    static KHook::Return<bool> ProcessTickPre(CServerSideClientBase* cl, const CNetMessagePB<CNETMsg_Tick>& msg) {
         bool allow=g_Menus.OnProcessTick(cl,msg); return {allow ? KHook::Action::Ignore : KHook::Action::Supersede,allow};
     }
-    static KHook::Return<bool> ProcessStringCmdPre(CServerSideClientBase* cl, const CNETMsg_StringCmd_t& msg) {
+    static KHook::Return<bool> ProcessStringCmdPre(CServerSideClientBase* cl, const CNetMessagePB<CNETMsg_StringCmd>& msg) {
         bool allow=g_Menus.OnProcessStringCmd(cl,msg); return {allow ? KHook::Action::Ignore : KHook::Action::Supersede,allow};
     }
     static KHook::Return<void> BuildGameSessionManifestPost(IGameSystem*, const EventBuildGameSessionManifest_t* const ev) {
@@ -331,9 +339,13 @@ struct PisexKHookBridge {
     inline static KHook::Virtual<INetworkServerService,void,const GameSessionConfiguration_t&,ISource2WorldSession*,const char*> startupServer{&INetworkServerService::StartupServer,nullptr,&StartupServerPost};
     inline static KHook::Virtual<IGameEventManager2,bool,IGameEvent*,bool> fireEvent{&IGameEventManager2::FireEvent,&FireEventPre,&FireEventPost};
     inline static KHook::Virtual<CCSPlayerPawn,bool,CTakeDamageInfoContainer*> takeDamageAlive{std::uint32_t{0},&OnTakeDamageAlivePre,nullptr};
-    inline static KHook::Virtual<CServerSideClient,void,int,const char*,int,void*,bool,int,int> clientSessionConnect{&CServerSideClient::Connect,nullptr,&ServerClientConnectPost};
-    inline static KHook::Virtual<CServerSideClientBase,bool,const CNETMsg_Tick_t&> processTick{&CServerSideClientBase::ProcessTick,&ProcessTickPre,nullptr};
-    inline static KHook::Virtual<CServerSideClientBase,bool,const CNETMsg_StringCmd_t&> processStringCmd{&CServerSideClientBase::ProcessStringCmd,&ProcessStringCmdPre,nullptr};
+    inline static KHook::Virtual<CServerSideClient,void,int,const char*,CPlayerUserId,INetChannel*,uint8,uint32> clientSessionConnect{&CServerSideClient::Connect,nullptr,&ServerClientConnectPost};
+    #if PISEX_PRIVATE_ABI_VERIFIED
+    inline static KHook::Virtual<CServerSideClientBase,bool,const CNetMessagePB<CNETMsg_Tick>&> processTick{&CServerSideClientBase::ProcessTick,&ProcessTickPre,nullptr};
+    #endif
+    #if PISEX_PRIVATE_ABI_VERIFIED
+    inline static KHook::Virtual<CServerSideClientBase,bool,const CNetMessagePB<CNETMsg_StringCmd>&> processStringCmd{&CServerSideClientBase::ProcessStringCmd,&ProcessStringCmdPre,nullptr};
+    #endif
     inline static KHook::Virtual<IGameSystem,void,const EventBuildGameSessionManifest_t* const> buildGameManifest{&IGameSystem::OnBuildGameSessionManifest,nullptr,&BuildGameSessionManifestPost};
 
     inline static void* pawnFake[1]={};
@@ -342,14 +354,22 @@ struct PisexKHookBridge {
     static void InstallPawn(void* vtable,int index) { if(index<=0 || index>512) return; pawnFake[0]=vtable; takeDamageAlive.Configure(index); takeDamageAlive.AddGlobal(reinterpret_cast<CCSPlayerPawn*>(pawnFake)); }
     static void InstallServerClient(void* vtable) { serverClientFake[0]=vtable;
         clientSessionConnect.AddGlobal(reinterpret_cast<CServerSideClient*>(serverClientFake));
+#if PISEX_PRIVATE_ABI_VERIFIED
         processTick.AddGlobal(reinterpret_cast<CServerSideClientBase*>(serverClientFake));
-        processStringCmd.AddGlobal(reinterpret_cast<CServerSideClientBase*>(serverClientFake)); }
+        processStringCmd.AddGlobal(reinterpret_cast<CServerSideClientBase*>(serverClientFake));
+#endif }
     static void InstallGameSystem(void* vtable) { gameSystemFake[0]=vtable; buildGameManifest.AddGlobal(reinterpret_cast<IGameSystem*>(gameSystemFake)); }
     static void InstallEventManager(IGameEventManager2* mgr) {fireEvent.AddGlobal(mgr);}
     static void UninstallDynamic(IGameEventManager2* mgr) {
         if(mgr) fireEvent.RemoveGlobal(mgr);
         if(pawnFake[0]) takeDamageAlive.RemoveGlobal(reinterpret_cast<CCSPlayerPawn*>(pawnFake));
-        if(serverClientFake[0]) {clientSessionConnect.RemoveGlobal(reinterpret_cast<CServerSideClient*>(serverClientFake)); processTick.RemoveGlobal(reinterpret_cast<CServerSideClientBase*>(serverClientFake)); processStringCmd.RemoveGlobal(reinterpret_cast<CServerSideClientBase*>(serverClientFake));}
+        if(serverClientFake[0]) {
+            clientSessionConnect.RemoveGlobal(reinterpret_cast<CServerSideClient*>(serverClientFake));
+#if PISEX_PRIVATE_ABI_VERIFIED
+            processTick.RemoveGlobal(reinterpret_cast<CServerSideClientBase*>(serverClientFake));
+            processStringCmd.RemoveGlobal(reinterpret_cast<CServerSideClientBase*>(serverClientFake));
+#endif
+        }
         if(gameSystemFake[0]) buildGameManifest.RemoveGlobal(reinterpret_cast<IGameSystem*>(gameSystemFake));
     }
     inline static KHook::Virtual<IServerGameDLL, void, bool> preWorldUpdate{
@@ -1465,9 +1485,18 @@ void Menus::OnPluginUnload(PluginId id) {
 void Menus::OnBuildGameSessionManifest(const EventBuildGameSessionManifest_t& msg)
 {
     IEntityResourceManifest* pResourceManifest = msg.m_pResourceManifest;
+    if (!pResourceManifest) return;
+#if !PISEX_PRIVATE_ABI_VERIFIED
+    (void)pResourceManifest;
+#endif
     for (auto& it : g_mapPrecache)
     {
+#if PISEX_PRIVATE_ABI_VERIFIED
         pResourceManifest->AddResource(it.c_str());
+#else
+        // Compile probe only: no safe public AddResource ABI available.
+        (void)it;
+#endif
     }
 }
 
@@ -1484,7 +1513,7 @@ bool Menus::Hook_OnTakeDamage_Alive(CCSPlayerPawn *pPawn, CTakeDamageInfoContain
 	return true;
 }
 
-void Menus::OnServerSideClientClientConnect(CServerSideClient* pClient, int socket, const char* pszName, int nUserID, void* pConnection, bool bFakePlayer, int nArg6, int nArg7)
+void Menus::OnServerSideClientClientConnect(CServerSideClient* pClient, int socket, const char* pszName, CPlayerUserId nUserID, INetChannel* pConnection, uint8 nConnectionFlags, uint32 nChallenge)
 {
 
 	if(!pClient) return;
@@ -1504,24 +1533,40 @@ void Menus::OnCServerSideClientlientPerformDisconnection(CServerSideClient* pCli
 	return;
 }
 
-bool Menus::OnProcessTick(CServerSideClientBase* pClient, const CNETMsg_Tick_t& msg)
+bool Menus::OnProcessTick(CServerSideClientBase* pClient, const CNetMessagePB<CNETMsg_Tick>& msg)
 {
+#if !PISEX_PRIVATE_ABI_VERIFIED
+    // No safe slot mapping or virtual target in the supplied SDK.
+    (void)pClient;
+    (void)msg;
+    return true;
+#else
+
 
 	if(!pClient) return true;
 	int iSlot = pClient->GetPlayerSlot().Get();
 	if(iSlot >= 0 && iSlot < 64 && !g_pPlayersApi->ProcessTick(iSlot, msg))
 		return false;
 	return true;
+#endif
 }
 
-bool Menus::OnProcessStringCmd(CServerSideClientBase* pClient, const CNETMsg_StringCmd_t& msg)
+bool Menus::OnProcessStringCmd(CServerSideClientBase* pClient, const CNetMessagePB<CNETMsg_StringCmd>& msg)
 {
+#if !PISEX_PRIVATE_ABI_VERIFIED
+    // No safe slot mapping or virtual target in the supplied SDK.
+    (void)pClient;
+    (void)msg;
+    return true;
+#else
+
 
 	if(!pClient) return true;
 	int iSlot = pClient->GetPlayerSlot().Get();
 	if(iSlot >= 0 && iSlot < 64 && !g_pPlayersApi->ProcessStringCmd(iSlot, msg))
 		return false;
 	return true;
+#endif
 }
 
 bool Menus::Unload(char *error, size_t maxlen)

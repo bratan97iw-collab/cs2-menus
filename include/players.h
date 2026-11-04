@@ -12,8 +12,8 @@ class CCommand;
 class KeyValues;
 class CCLCMsg_Move;
 template <typename PROTO_TYPE> class CNetMessagePB;
-class CNETMsg_Tick_t;
-class CNETMsg_StringCmd_t;
+class CNETMsg_Tick;
+class CNETMsg_StringCmd;
 
 struct trace_info_t;
 
@@ -54,8 +54,8 @@ public:
 	virtual void ClientCommandKeyValues(int iSlot, KeyValues *pKeyValues) { };
 	virtual void ClientSvcUserMessage(int iSlot, int um_type, uint32 size, const void *buf) { };
 	virtual bool ProcessClientVoiceData(int iSlot, void *pVoiceInfo) { return true; };
-    virtual bool ProcessTick(int iSlot, const CNETMsg_Tick_t& msg) { return true; };
-    virtual bool ProcessStringCmd(int iSlot, const CNETMsg_StringCmd_t& msg) { return true; };
+    virtual bool ProcessTick(int iSlot, const CNetMessagePB<CNETMsg_Tick>& msg) { return true; };
+    virtual bool ProcessStringCmd(int iSlot, const CNetMessagePB<CNETMsg_StringCmd>& msg) { return true; };
 };
 
 class IPlayersApi

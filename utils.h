@@ -4,7 +4,9 @@
 #include <ISmmPlugin.h>
 #include "utlvector.h"
 #include "ehandle.h"
-#include <iserver.h>
+#include <engine2/inetworkgameserver.h>
+#include <engine2/inetworkserverservice.h>
+#include <engine2/serversideclient.h>
 #include <entity2/entitysystem.h>
 #include <steam/steam_gameserver.h>
 #include "irecipientfilter.h"
@@ -167,10 +169,10 @@ private:
 	void OnClientSvcUserMessage( CPlayerSlot slot, int um_type, uint32 size, const void *buf );
 	bool Hook_OnTakeDamage_Alive(CCSPlayerPawn *pPawn, CTakeDamageInfoContainer *pInfoContainer);
 
-	void OnServerSideClientClientConnect(CServerSideClient* pClient, int socket, const char* pszName, int nUserID, void* pConnection, bool bFakePlayer, int nArg6, int nArg7);
+	void OnServerSideClientClientConnect(CServerSideClient* pClient, int socket, const char* pszName, CPlayerUserId nUserID, INetChannel* pConnection, uint8 nConnectionFlags, uint32 nChallenge);
 	void OnCServerSideClientlientPerformDisconnection(CServerSideClient* pClient, ENetworkDisconnectionReason reason);
-	bool OnProcessTick(CServerSideClientBase* pClient, const CNETMsg_Tick_t& msg);
-	bool OnProcessStringCmd(CServerSideClientBase* pClient, const CNETMsg_StringCmd_t& msg);
+	bool OnProcessTick(CServerSideClientBase* pClient, const CNetMessagePB<CNETMsg_Tick>& msg);
+	bool OnProcessStringCmd(CServerSideClientBase* pClient, const CNetMessagePB<CNETMsg_StringCmd>& msg);
 
 	void OnEntityCreated(CEntityInstance* pEntity) override;
 	void OnEntitySpawned(CEntityInstance* pEntity) override;
@@ -1055,13 +1057,13 @@ public:
 		for (auto& item : m_Listeners)
 			if (item.second) item.second->OnClientSessionEnd(iSlot);
 	}
-	bool ProcessTick(int iSlot, const CNETMsg_Tick_t& msg) {
+	bool ProcessTick(int iSlot, const CNetMessagePB<CNETMsg_Tick>& msg) {
 		bool bAllow = true;
 		for (auto& item : m_Listeners)
 			if (item.second && !item.second->ProcessTick(iSlot, msg)) bAllow = false;
 		return bAllow;
 	}
-	bool ProcessStringCmd(int iSlot, const CNETMsg_StringCmd_t& msg) {
+	bool ProcessStringCmd(int iSlot, const CNetMessagePB<CNETMsg_StringCmd>& msg) {
 		bool bAllow = true;
 		for (auto& item : m_Listeners)
 			if (item.second && !item.second->ProcessStringCmd(iSlot, msg)) bAllow = false;
