@@ -9,6 +9,7 @@
 #include <steam/steam_gameserver.h>
 #include "irecipientfilter.h"
 #include <engine/igameeventsystem.h>
+#include <igameevents.h>
 #include "entitysystem.h"
 #include "vector.h"
 #include "entitykeyvalues.h"
@@ -44,8 +45,7 @@
 #include "customhud.pb.h"
 
 static constexpr int CS_UM_CustomHudClicked = 390;
-class CCSUsrMsg_CustomHudClicked_t
-    : public CUserMessagePB<CS_UM_CustomHudClicked, CCSUsrMsg_CustomHudClicked> {};
+using CCSUsrMsg_CustomHudClicked_t = CNetMessagePB<CCSUsrMsg_CustomHudClicked>;
 
 class CPhysicsQuery;
 
@@ -70,6 +70,8 @@ public:
 	bool IsInitMessage(void) const override { return m_bInitMessage; }
 	const CPlayerBitVec& GetRecipients(void) const override { return m_Recipients; }
 	CPlayerSlot GetPredictedPlayerSlot() const override { return m_nPredictedByPlayerSlot; }
+
+	void SetRecipients(const CPlayerBitVec& recipients) { m_Recipients = recipients; }
 
 	void AddRecipient(int iSlot)
 	{
