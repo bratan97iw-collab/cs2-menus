@@ -36,6 +36,33 @@ jobs:
           git clone https://github.com/Pisex/SchemaEntity.git ../SchemaEntity
           test -f ../hl2sdk-manifests/SdkHelpers.ambuild
 
+      - name: Correct KHook reference argument stack sizing
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PYKHREF'
+          from pathlib import Path
+          p = Path('external/metamod-source/third_party/khook/include/khook.hpp')
+          src = p.read_text(encoding='utf-8')
+          # On Linux C++ reference arguments occupy a pointer-sized ABI slot.
+          # sizeof(const ForwardDeclaredType&) requires its definition even
+          # though an argument of reference type is passed as a pointer.
+          # Apply ONLY to the KHook stack-copy calculation, not the whole header.
+          # Limit replacement to the stack-size return statement only.
+          # sizeof(reference) incorrectly requires a definition of an SDK class.
+          marker = 'return return_size +'
+          assert src.count(marker) == 1, 'Unexpected KHook stack-size implementation'
+          start = src.index(marker)
+          end = src.index(';', start)
+          statement = src[start:end]
+          assert statement.count('sizeof(ARGS)') == 1, 'KHook argument-size expression changed'
+          replacement = 'sizeof(std::conditional_t<std::is_reference_v<ARGS>, void*, ARGS>)'
+          updated = src[:start] + statement.replace('sizeof(ARGS)', replacement) + src[end:]
+          p.write_text(updated, encoding='utf-8')
+          assert replacement in p.read_text(encoding='utf-8')
+          print('KHook reference arguments now use pointer-width stack slots')
+          PYKHREF
+
       - name: Adapt SchemaEntity headers for current CS2 SDK
         shell: bash
         run: |
@@ -258,80 +285,50 @@ jobs:
           path: sdk-diagnostics/
           if-no-files-found: warn
 
-      - name: Capture full ABI evidence (SDK and SchemaEntity)
+      - name: Capture complete relevant SDK headers and ABI evidence
         if: always()
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p sdk-full-evidence/headers
+          mkdir -p sdk-diagnostics/full-headers sdk-diagnostics/generated-proto
           python3 - <<'PYABI'
           from pathlib import Path
-          import shutil
-
-          dest = Path('sdk-full-evidence')
-          roots = [Path('external/hl2sdk-cs2'), Path('external/metamod-source'), Path('../SchemaEntity')]
-          terms = (
-              'CServerSideClientBase', 'CServerSideClient', 'CNETMsg_Tick_t',
-              'CNETMsg_StringCmd_t', 'GameSessionConfiguration_t',
-              'IEntityResourceManifest', 'ProcessTick', 'ProcessStringCmd',
-              'OnBuildGameSessionManifest', 'ProcessUsercmds', 'CCheckTransmitInfo'
-          )
-          candidates = []
-          for root in roots:
-              if not root.exists():
-                  continue
-              for path in root.rglob('*'):
-                  if not path.is_file() or path.suffix.lower() not in ('.h', '.hpp', '.hh'):
-                      continue
-                  if '/thirdparty/' in str(path).lower() and '/khook/' not in str(path).lower():
-                      continue
-                  if path.stat().st_size > 512000:
-                      continue
-                  try:
-                      contents = path.read_text(errors='replace')
-                  except OSError:
-                      continue
-                  hits = [term for term in terms if term in contents]
-                  if hits:
-                      candidates.append((path, hits))
-
-          with (dest / 'manifest.txt').open('w', encoding='utf-8') as out:
-              print('Full header evidence from GitHub Actions; not an ABI verification.', file=out)
-              print('SDK roots:', *(str(x) for x in roots), sep='\n  ', file=out)
-              print('Found candidate headers:', len(candidates), file=out)
-              for path, hits in candidates:
-                  print(f'{path} | {", ".join(hits)}', file=out)
-
-          # Preserve each original header path to make includes and dependencies traceable.
-          # A cap keeps the artifact reasonably small while prioritizing the relevant SDK files.
-          priority = lambda item: (-len(item[1]), len(str(item[0])), str(item[0]))
-          selected = sorted(candidates, key=priority)[:100]
-          for path, _ in selected:
-              prefix = 'SchemaEntity' if str(path).startswith('../SchemaEntity') else 'repository'
-              relative = path.relative_to('../SchemaEntity') if prefix == 'SchemaEntity' else path
-              target = dest / 'headers' / prefix / relative
-              target.parent.mkdir(parents=True, exist_ok=True)
-              shutil.copy2(path, target)
-          print(f'Captured {len(selected)} complete SDK/SchemaEntity headers')
-          for p in ('utils.cpp', 'utils.h', 'include/players.h', 'AMBuilder'):
-              source = Path(p)
-              if source.is_file():
-                  target = dest / 'project' / p
-                  target.parent.mkdir(parents=True, exist_ok=True)
-                  shutil.copy2(source, target)
+          import shutil, json
+          source_roots = [Path('external/hl2sdk-cs2/public'), Path('external/hl2sdk-cs2/game'),
+                          Path('external/metamod-source/core'), Path('external/metamod-source/third_party/khook/include'),
+                          Path('../SchemaEntity')]
+          terms = ('CServerSideClientBase','CNETMsg_Tick_t','CNETMsg_StringCmd_t',
+                   'GameSessionConfiguration_t','IEntityResourceManifest',
+                   'EventBuildGameSessionManifest_t','ProcessTick','ProcessStringCmd')
+          included = []
+          for base in source_roots:
+              if not base.exists(): continue
+              for p in base.rglob('*'):
+                  if not p.is_file() or p.suffix.lower() not in {'.h','.hpp','.hh','.cpp'}: continue
+                  if p.stat().st_size > 300000: continue
+                  try: content=p.read_text(encoding='utf-8', errors='replace')
+                  except OSError: continue
+                  if not any(t in content for t in terms): continue
+                  # Preserve source identity; never alter the SDK itself.
+                  safe = str(p).replace('../','_parent_/').replace('/','__')
+                  shutil.copy2(p,Path('sdk-diagnostics/full-headers')/safe)
+                  included.append(str(p))
+          for name in ('netmessages.pb.h','networkbasetypes.pb.h','usercmd.pb.h','gameevents.pb.h'):
+              for p in Path('build').rglob(name):
+                  shutil.copy2(p, Path('sdk-diagnostics/generated-proto')/name)
+                  break
+          (Path('sdk-diagnostics')/'full-header-paths.json').write_text(json.dumps(included,indent=2))
+          print('Captured',len(included),'full header/source files for ABI diagnosis')
           PYABI
-          echo "GitHub SHA: $GITHUB_SHA" > sdk-full-evidence/build-info.txt
-          echo "GitHub workflow: $GITHUB_WORKFLOW" >> sdk-full-evidence/build-info.txt
-          test -s sdk-full-evidence/manifest.txt
 
-      - name: Upload complete Pisex ABI evidence
+      - name: Upload full SDK ABI evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: pisex-api18-full-abi-evidence
-          path: sdk-full-evidence/
-          if-no-files-found: error
-          retention-days: 7
+          path: sdk-diagnostics/
+          if-no-files-found: warn
+          retention-days: 14
 
       - name: Reject unresolved custom HUD layout methods
         if: success()
