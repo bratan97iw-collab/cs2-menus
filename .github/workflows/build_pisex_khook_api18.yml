@@ -206,6 +206,58 @@ jobs:
           set -euo pipefail
           ambuild
 
+      - name: Capture exact SDK declarations after compile
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p sdk-diagnostics
+          python3 - <<'PYSDK'
+          from pathlib import Path
+          import re
+          roots = [Path('external/hl2sdk-cs2'), Path('external/metamod-source'), Path('../SchemaEntity'), Path('include')]
+          terms = ['CheckTransmit', 'CCheckTransmitInfo', 'CServerSideClient',
+                   'PerformDisconnection', 'ProcessTick', 'ProcessStringCmd',
+                   'ProcessUsercmds', 'CCLCMsg_Move_t', 'CNETMsg_Tick_t',
+                   'CNETMsg_StringCmd_t', 'GameSessionConfiguration_t',
+                   'IEntityResourceManifest', 'OnBuildGameSessionManifest']
+          suffixes = {'.h','.hpp','.hh','.cc','.cpp'}
+          output=Path('sdk-diagnostics/sdk-declarations.txt')
+          count=0
+          with output.open('w', encoding='utf-8') as out:
+              for root in roots:
+                  if not root.exists(): continue
+                  for f in root.rglob('*'):
+                      if not f.is_file() or f.suffix.lower() not in suffixes: continue
+                      if 'thirdparty' in str(f).lower() and 'khook' not in str(f).lower(): continue
+                      try: lines=f.read_text(encoding='utf-8',errors='replace').splitlines()
+                      except OSError: continue
+                      hits=[i for i,s in enumerate(lines) if any(t in s for t in terms)]
+                      if not hits: continue
+                      print('\nFILE:',f,file=out)
+                      shown=set()
+                      for i in hits[:80]:
+                          for k in range(max(0,i-3),min(len(lines),i+6)):
+                              if k not in shown:
+                                  print(f'{k+1:5} {lines[k][:300]}',file=out)
+                                  shown.add(k)
+                      count+=1
+              print('HEADER FILES WITH MATCHES:',count,file=out)
+          print('Captured declaration snippets from', count, 'files')
+          PYSDK
+          cp utils.cpp sdk-diagnostics/utils.cpp
+          cp utils.h sdk-diagnostics/utils.h
+          echo '## Relevant SDK header paths' > sdk-diagnostics/paths.txt
+          find external/hl2sdk-cs2 -type f \( -iname '*server*client*' -o -iname '*manifest*' -o -iname '*game*session*' -o -iname '*transmit*' \) >> sdk-diagnostics/paths.txt || true
+
+      - name: Upload API 18 compiler diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pisex-api18-sdk-declarations
+          path: sdk-diagnostics/
+          if-no-files-found: warn
+
       - name: Reject unresolved custom HUD layout methods
         if: success()
         shell: bash
