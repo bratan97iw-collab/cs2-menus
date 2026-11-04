@@ -141,11 +141,10 @@ jobs:
               '#include "CBasePlayerController.h"\n#include "CCSPlayerPawn.h"'
           )
 
-          replace_once(
-              Path("utils.h"),
-              '#include "igameeventsystem.h"',
-              '#include <engine/igameeventsystem.h>'
-          )
+          # utils.h already uses <engine/igameeventsystem.h> in the repository.
+          # Do not patch the obsolete include a second time.
+          assert '#include <engine/igameeventsystem.h>' in Path('utils.h').read_text(), \
+              'utils.h must include <engine/igameeventsystem.h>'
 
           print("Header dependencies updated successfully")
           PY
