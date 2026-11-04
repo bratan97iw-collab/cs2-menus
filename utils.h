@@ -42,7 +42,7 @@
 #include <thread>
 #include "netmessages.pb.h"
 #include <igamesystem.h>
-#include <usermessages.h>
+#include "usermessages.pb.h"
 #include "customhud.pb.h"
 
 static constexpr int CS_UM_CustomHudClicked = 390;
