@@ -51,6 +51,28 @@ jobs:
             --output "$sdk_public/engine/igameeventsystem.h"
           grep -q 'GAMEEVENTSYSTEM_INTERFACE_VERSION' "$sdk_public/engine/igameeventsystem.h"
           grep -q 'PostEventAbstract' "$sdk_public/engine/igameeventsystem.h"
+          # The legacy header includes eiface.h solely for base engine types.
+          # eiface.h was removed from modern s2sdk and would import older,
+          # conflicting server interfaces. Use the modern public headers.
+          python3 - <<'PYLEGACY'
+          from pathlib import Path
+          p = Path('external/hl2sdk-cs2/public/engine/igameeventsystem.h')
+          data = p.read_text()
+          changes = {
+              '#include <eiface.h>': '#include <appframework/iappsystem.h>\n#include <playerslot.h>',
+              '#include <inetchannel.h>': '#include <networksystem/inetchannel.h>',
+          }
+          for old, new in changes.items():
+              if data.count(old) != 1:
+                  raise SystemExit(f'Legacy declaration changed: expected exactly one {old}')
+              data = data.replace(old, new)
+          p.write_text(data)
+          print('Adapted legacy IGameEventSystem includes to the modern s2sdk header layout')
+          PYLEGACY
+          if grep -E '^#include <(eiface|inetchannel)\.h>' "$sdk_public/engine/igameeventsystem.h"; then
+            echo 'ERROR: unsupported legacy includes remained'
+            exit 1
+          fi
           echo 'Legacy IGameEventSystem declaration staged from pinned old SDK.'
           echo 'Header dependencies in new s2sdk:'
           for header in eiface.h inetchannel.h irecipientfilter.h; do
