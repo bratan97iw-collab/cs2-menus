@@ -1,0 +1,80 @@
+name: Inspect Pisex KHook API for Metamod 1483
+
+on:
+  workflow_dispatch:
+
+jobs:
+  inspect:
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout Pisex fork
+        uses: actions/checkout@v4
+
+      - name: Fetch exact Metamod and CS2 SDK dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p external
+          git clone --recursive https://github.com/alliedmodders/metamod-source.git external/metamod-source
+          git -C external/metamod-source checkout 170058a
+          git -C external/metamod-source submodule update --init --recursive
+          git clone --recursive --branch cs2 https://github.com/alliedmodders/hl2sdk.git external/hl2sdk-cs2
+          echo "Metamod commit: $(git -C external/metamod-source rev-parse HEAD)"
+          echo "HL2SDK commit: $(git -C external/hl2sdk-cs2 rev-parse HEAD)"
+
+      - name: Export exact KHook declarations and SDK signatures
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p migration-diagnostics
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          out=Path('migration-diagnostics')
+          root=Path('external/metamod-source')
+          matches=list(root.rglob('khook.hpp'))
+          report=['# Metamod API 18 / KHook source inspection', '', '## Dependency commits']
+          import subprocess
+          for path in ('external/metamod-source','external/hl2sdk-cs2'):
+              commit=subprocess.check_output(['git','-C',path,'rev-parse','HEAD'],text=True).strip()
+              report.append(f'- {path}: `{commit}`')
+          report += ['',f'## khook.hpp files found: {len(matches)}']
+          for i,p in enumerate(matches):
+              report.append(f'- `{p}`')
+              # preserve the exact installed API for migration, including templates and macros.
+              (out/f'khook_{i}.hpp').write_bytes(p.read_bytes())
+          # Capture related include files and interface signatures without guessing locations.
+          for name in ('ISmmPlugin.h','iserver.h','igameeventsystem.h','igameevents.h'):
+              candidates=list(root.rglob(name))+list(Path('external/hl2sdk-cs2').rglob(name))
+              report.append(f'\n## {name} ({len(candidates)} matches)')
+              for p in candidates[:12]:
+                  report.append(f'- `{p}`')
+                  text=p.read_text(errors='replace').splitlines()
+                  for i,line in enumerate(text):
+                      if re.search(r'(KHOOK|PostEventAbstract|ClientConnect|ClientCommand|FireEvent|SetClientListening)',line):
+                          report.append(f'  - L{i+1}: `{line.strip()[:220]}`')
+          src=Path('utils.cpp').read_text(errors='replace').splitlines()
+          report += ['','## Pisex hook sites in utils.cpp']
+          patterns=('SH_DECL_','SH_ADD_','SH_REMOVE_','RETURN_META','META_RESULT_','SH_CALL(')
+          for i,line in enumerate(src,1):
+              if any(p in line for p in patterns) and not line.lstrip().startswith('//'):
+                  report.append(f'- L{i}: `{line.strip()[:250]}`')
+          (out/'REPORT.md').write_text('\n'.join(report)+'\n')
+          if not matches:
+              print('ERROR: khook.hpp not found in checked-out Metamod dependencies')
+          else:
+              print('Found KHook files:',*[str(p) for p in matches],sep='\n')
+          print('Diagnostic report prepared:', out/'REPORT.md')
+          PY
+          # Emit a small preview. The complete files are in the artifact.
+          grep -E 'KHOOK|khook.hpp|Metamod commit|HL2SDK commit' migration-diagnostics/REPORT.md | head -35 || true
+
+      - name: Upload KHook API inspection bundle
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pisex-khook-api18-inspection
+          path: migration-diagnostics/
+          if-no-files-found: warn
