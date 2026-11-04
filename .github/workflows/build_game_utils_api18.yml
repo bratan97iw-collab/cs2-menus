@@ -179,16 +179,22 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test -f external/metamod-source/core/sourcehook/sourcehook.h
+          echo 'Searching for SourceHook headers in fetched Metamod checkout...'
+          find external/metamod-source -name sourcehook.h -type f -print || true
           python3 - <<'PYSOURCEHOOK'
           from pathlib import Path
 
           cpp = Path('utils.cpp')
+          if not cpp.is_file():
+              raise SystemExit('Cannot find utils.cpp in the repository root')
+          headers = list(Path('external/metamod-source').rglob('sourcehook.h'))
+          if not headers:
+              raise SystemExit('No sourcehook.h in downloaded Metamod checkout; inspect checkout revision/submodules')
           source = cpp.read_text()
           inc = '#include <sourcehook.h>'
           if inc not in source:
               cpp.write_text(inc + '\n' + source)
-          print('SourceHook declarations explicitly included in utils.cpp')
+          print('SourceHook include inserted; found headers:', [str(h) for h in headers])
           PYSOURCEHOOK
 
       - name: Compile Game Utils (API 18)
