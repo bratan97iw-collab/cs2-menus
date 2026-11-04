@@ -1,0 +1,360 @@
+name: Build Pisex Game Utils - full KHook API 18 attempt
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout Game Utils source
+        uses: actions/checkout@v4
+
+      - name: Install build prerequisites and AMBuild
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y git clang python3 python3-pip python3-venv build-essential pkg-config protobuf-compiler libprotobuf-dev zip
+          python3 -m venv "$RUNNER_TEMP/ambuild-venv"
+          "$RUNNER_TEMP/ambuild-venv/bin/python" -m pip install git+https://github.com/alliedmodders/ambuild.git
+          echo "$RUNNER_TEMP/ambuild-venv/bin" >> "$GITHUB_PATH"
+
+      - name: Fetch SDK dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p external
+          git clone --recursive https://github.com/alliedmodders/metamod-source.git external/metamod-source
+          git -C external/metamod-source checkout 170058a
+          git -C external/metamod-source submodule update --init --recursive
+          git clone --recursive --branch cs2 https://github.com/alliedmodders/hl2sdk.git external/hl2sdk-cs2
+          git -C external/hl2sdk-cs2 checkout 3f4110dce3060b352d49bf100f1a43f7705aab06
+          git clone https://github.com/alliedmodders/hl2sdk-manifests.git ../hl2sdk-manifests
+          git clone https://github.com/Pisex/SchemaEntity.git ../SchemaEntity
+          test -f ../hl2sdk-manifests/SdkHelpers.ambuild
+
+      - name: Adapt SchemaEntity headers for current CS2 SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          root = Path('../SchemaEntity')
+          globaltypes = root / 'globaltypes.h'
+          original = globaltypes.read_text()
+          assert '#include "schemasystem.h"' in original, 'SchemaEntity globaltypes.h changed; inspect before patching'
+          if '#include "gametrace.h"' not in original:
+              original = original.replace('#include "schemasystem.h"', '#include "schemasystem.h"\n#include "ray.h"\n#include "gametrace.h"', 1)
+          globaltypes.write_text(original)
+          print('Updated SchemaEntity/globaltypes.h with ray.h and gametrace.h')
+
+          schemasystem = root / 'schemasystem.cpp'
+          old = schemasystem.read_text()
+          count = old.count('NetworkStateChanged_t')
+          assert count >= 3, f'Expected legacy NetworkStateChanged_t references, found {count}; inspect dependency version'
+          new = old.replace('NetworkStateChanged_t', 'NetworkStateChangedData')
+          schemasystem.write_text(new)
+          print(f'Renamed {count} NetworkStateChanged_t reference(s) to NetworkStateChangedData')
+          PY
+          test -f external/hl2sdk-cs2/public/ray.h
+          test -f external/hl2sdk-cs2/public/gametrace.h
+
+      - name: Restore CS2 protobuf sources for legacy Pisex build
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --depth 1 https://github.com/SteamTracking/Protobufs.git "$RUNNER_TEMP/cs2-protobufs"
+          proto_src="$RUNNER_TEMP/cs2-protobufs/csgo"
+          proto_dst="$GITHUB_WORKSPACE/external/hl2sdk-cs2/thirdparty/game_protobufs/csgo"
+          mkdir -p "$proto_dst"
+          cp -a "$proto_src/." "$proto_dst/"
+          for name in networksystem_protomessages valveextensions network_connection networkbasetypes engine_gcmessages netmessages gameevents usercmd usermessages source2_steam_stats; do
+            test -s "$proto_dst/$name.proto" || { echo "Missing protobuf: $name.proto"; exit 1; }
+          done
+          echo 'Legacy protobuf files are available.'
+
+      - name: Configure AMBuild
+        shell: bash
+        env:
+          HL2SDK_ROOT: ${{ github.workspace }}/external
+          MMS_PATH: ${{ github.workspace }}/external/metamod-source
+        run: |
+          set -euo pipefail
+          mkdir -p build
+          cd build
+          "$RUNNER_TEMP/ambuild-venv/bin/python" ../configure.py -s cs2 --targets x86_64 --enable-optimize --hl2sdk-manifests=../hl2sdk-manifests --mms_path="$MMS_PATH" --hl2sdk-root="$HL2SDK_ROOT"
+
+      - name: Diagnose CS2 SDK headers
+        shell: bash
+        run: |
+          echo "=== HUD headers ==="
+          find external ../SchemaEntity -iname '*hud*layout*.h' -print
+          echo "=== Fake client flags ==="
+          grep -RnE 'FL_(PAWN_|CONTROLLER_)?FAKECLIENT' external/hl2sdk-cs2/public ../SchemaEntity | head -40 || true
+
+      - name: Fix legacy fake client flags
+        shell: bash
+        run: |
+          set -euo pipefail
+          sed -i 's/FL_PAWN_FAKECLIENT/FL_FAKECLIENT/g' ../SchemaEntity/CCSPlayerPawn.h
+          sed -i 's/FL_CONTROLLER_FAKECLIENT/FL_FAKECLIENT/g' ../SchemaEntity/CCSPlayerController.h
+          echo "Legacy fake client flags updated"
+
+      - name: Fix SchemaEntity circular includes
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          base = Path("../SchemaEntity")
+
+          def replace_once(path, old, new):
+              text = path.read_text()
+              if old not in text:
+                  raise SystemExit(f"Expected text not found: {path}: {old}")
+              path.write_text(text.replace(old, new, 1))
+
+          replace_once(
+              base / "CBasePlayerPawn.h",
+              "class CBasePlayerPawn :",
+              "class CBasePlayerController;\n\nclass CBasePlayerPawn :"
+          )
+
+          replace_once(
+              base / "CBasePlayerController.h",
+              '#include "CCSPlayerPawn.h"',
+              '#include "CBasePlayerPawn.h"'
+          )
+
+          replace_once(
+              base / "CCSPlayerPawn.h",
+              '#include "CCSPlayerController.h"',
+              '// Forward declaration of CCSPlayerController below'
+          )
+
+          replace_once(
+              base / "CCSPlayerController.h",
+              '#include "CBasePlayerController.h"',
+              '#include "CBasePlayerController.h"\n#include "CCSPlayerPawn.h"'
+          )
+
+          # utils.h already uses <engine/igameeventsystem.h> in the repository.
+          # Do not patch the obsolete include a second time.
+          assert '#include <engine/igameeventsystem.h>' in Path('utils.h').read_text(), \
+              'utils.h must include <engine/igameeventsystem.h>'
+
+          print("Header dependencies updated successfully")
+          PY
+
+      - name: Break SchemaEntity services include cycle
+        shell: bash
+        run: |
+          set -euo pipefail
+          sed -i '/^#include <CCSPlayerPawn.h>$/d' ../SchemaEntity/services.h
+          echo "Removed circular pawn include from services.h"
+
+      - name: Restore DamageReactServices schema field
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PYSCHEMA'
+          from pathlib import Path
+
+          header = Path('../SchemaEntity/CCSPlayerPawn.h')
+          source = header.read_text()
+          field = 'SCHEMA_FIELD(CCSPlayer_DamageReactServices*, m_pDamageReactServices);'
+          anchor = 'SCHEMA_FIELD(CCSPlayer_ActionTrackingServices*, m_pActionTrackingServices);'
+          if field not in source:
+              if source.count(anchor) != 1:
+                  raise SystemExit('CCSPlayerPawn.h has changed; cannot safely insert damage services')
+              source = source.replace(anchor, anchor + '\n\t' + field, 1)
+              header.write_text(source)
+          print('DamageReactServices schema accessor is declared')
+          PYSCHEMA
+
+      - name: Verify KHook conversion and SDK header
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s external/metamod-source/third_party/khook/include/khook.hpp
+          test -s utils.cpp
+          test -s utils.h
+          test -s AMBuilder
+          python3 - <<'PYKHOOK'
+          from pathlib import Path
+          import re
+          source = Path('utils.cpp').read_text()
+          for word in (r'\bSH_DECL_\w*\s*\(',r'\bSH_ADD_\w*\s*\(',r'\bSH_REMOVE_\w*\s*\(', r'\bRETURN_META\w*\s*\(', r'\bMETA_IFACEPTR\s*\('):
+              lines=[(i,l) for i,l in enumerate(source.splitlines(),1)
+                     if re.search(word,l) and not l.lstrip().startswith('//')]
+              if lines:
+                  raise SystemExit(f'Legacy SourceHook remains: {word}: {lines[:6]}')
+          builder=Path('AMBuilder').read_text()
+          if "'khook', 'include'" not in builder:
+              raise SystemExit('AMBuilder must include Metamod bundled KHook include path')
+          print('All active SourceHook references removed; KHook include path configured.')
+          PYKHOOK
+
+      - name: Compile Game Utils (API 18)
+        shell: bash
+        working-directory: build
+        run: |
+          set -euo pipefail
+          ambuild
+
+      - name: Capture exact SDK declarations after compile
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p sdk-diagnostics
+          python3 - <<'PYSDK'
+          from pathlib import Path
+          import re
+          roots = [Path('external/hl2sdk-cs2'), Path('external/metamod-source'), Path('../SchemaEntity'), Path('include')]
+          terms = ['CheckTransmit', 'CCheckTransmitInfo', 'CServerSideClient',
+                   'PerformDisconnection', 'ProcessTick', 'ProcessStringCmd',
+                   'ProcessUsercmds', 'CCLCMsg_Move_t', 'CNETMsg_Tick_t',
+                   'CNETMsg_StringCmd_t', 'GameSessionConfiguration_t',
+                   'IEntityResourceManifest', 'OnBuildGameSessionManifest']
+          suffixes = {'.h','.hpp','.hh','.cc','.cpp'}
+          output=Path('sdk-diagnostics/sdk-declarations.txt')
+          count=0
+          with output.open('w', encoding='utf-8') as out:
+              for root in roots:
+                  if not root.exists(): continue
+                  for f in root.rglob('*'):
+                      if not f.is_file() or f.suffix.lower() not in suffixes: continue
+                      if 'thirdparty' in str(f).lower() and 'khook' not in str(f).lower(): continue
+                      try: lines=f.read_text(encoding='utf-8',errors='replace').splitlines()
+                      except OSError: continue
+                      hits=[i for i,s in enumerate(lines) if any(t in s for t in terms)]
+                      if not hits: continue
+                      print('\nFILE:',f,file=out)
+                      shown=set()
+                      for i in hits[:80]:
+                          for k in range(max(0,i-3),min(len(lines),i+6)):
+                              if k not in shown:
+                                  print(f'{k+1:5} {lines[k][:300]}',file=out)
+                                  shown.add(k)
+                      count+=1
+              print('HEADER FILES WITH MATCHES:',count,file=out)
+          print('Captured declaration snippets from', count, 'files')
+          PYSDK
+          cp utils.cpp sdk-diagnostics/utils.cpp
+          cp utils.h sdk-diagnostics/utils.h
+          echo '## Relevant SDK header paths' > sdk-diagnostics/paths.txt
+          find external/hl2sdk-cs2 -type f \( -iname '*server*client*' -o -iname '*manifest*' -o -iname '*game*session*' -o -iname '*transmit*' \) >> sdk-diagnostics/paths.txt || true
+
+      - name: Upload API 18 compiler diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pisex-api18-sdk-declarations
+          path: sdk-diagnostics/
+          if-no-files-found: warn
+
+      - name: Capture full ABI evidence (SDK and SchemaEntity)
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p sdk-full-evidence/headers
+          python3 - <<'PYABI'
+          from pathlib import Path
+          import shutil
+
+          dest = Path('sdk-full-evidence')
+          roots = [Path('external/hl2sdk-cs2'), Path('external/metamod-source'), Path('../SchemaEntity')]
+          terms = (
+              'CServerSideClientBase', 'CServerSideClient', 'CNETMsg_Tick_t',
+              'CNETMsg_StringCmd_t', 'GameSessionConfiguration_t',
+              'IEntityResourceManifest', 'ProcessTick', 'ProcessStringCmd',
+              'OnBuildGameSessionManifest', 'ProcessUsercmds', 'CCheckTransmitInfo'
+          )
+          candidates = []
+          for root in roots:
+              if not root.exists():
+                  continue
+              for path in root.rglob('*'):
+                  if not path.is_file() or path.suffix.lower() not in ('.h', '.hpp', '.hh'):
+                      continue
+                  if '/thirdparty/' in str(path).lower() and '/khook/' not in str(path).lower():
+                      continue
+                  if path.stat().st_size > 512000:
+                      continue
+                  try:
+                      contents = path.read_text(errors='replace')
+                  except OSError:
+                      continue
+                  hits = [term for term in terms if term in contents]
+                  if hits:
+                      candidates.append((path, hits))
+
+          with (dest / 'manifest.txt').open('w', encoding='utf-8') as out:
+              print('Full header evidence from GitHub Actions; not an ABI verification.', file=out)
+              print('SDK roots:', *(str(x) for x in roots), sep='\n  ', file=out)
+              print('Found candidate headers:', len(candidates), file=out)
+              for path, hits in candidates:
+                  print(f'{path} | {", ".join(hits)}', file=out)
+
+          # Preserve each original header path to make includes and dependencies traceable.
+          # A cap keeps the artifact reasonably small while prioritizing the relevant SDK files.
+          priority = lambda item: (-len(item[1]), len(str(item[0])), str(item[0]))
+          selected = sorted(candidates, key=priority)[:100]
+          for path, _ in selected:
+              prefix = 'SchemaEntity' if str(path).startswith('../SchemaEntity') else 'repository'
+              relative = path.relative_to('../SchemaEntity') if prefix == 'SchemaEntity' else path
+              target = dest / 'headers' / prefix / relative
+              target.parent.mkdir(parents=True, exist_ok=True)
+              shutil.copy2(path, target)
+          print(f'Captured {len(selected)} complete SDK/SchemaEntity headers')
+          for p in ('utils.cpp', 'utils.h', 'include/players.h', 'AMBuilder'):
+              source = Path(p)
+              if source.is_file():
+                  target = dest / 'project' / p
+                  target.parent.mkdir(parents=True, exist_ok=True)
+                  shutil.copy2(source, target)
+          PYABI
+          echo "GitHub SHA: $GITHUB_SHA" > sdk-full-evidence/build-info.txt
+          echo "GitHub workflow: $GITHUB_WORKFLOW" >> sdk-full-evidence/build-info.txt
+          test -s sdk-full-evidence/manifest.txt
+
+      - name: Upload complete Pisex ABI evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pisex-api18-full-abi-evidence
+          path: sdk-full-evidence/
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Reject unresolved custom HUD layout methods
+        if: success()
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t libs < <(find build -type f -name '*.so')
+          if [ "${#libs[@]}" -eq 0 ]; then echo 'No .so produced'; exit 1; fi
+          for lib in "${libs[@]}"; do
+            echo "Inspecting $lib"
+            nm -C -u "$lib" > "$RUNNER_TEMP/pisex-undefined-symbols.txt"
+            if grep 'CCSCustomHudLayout::' "$RUNNER_TEMP/pisex-undefined-symbols.txt"; then
+              echo 'ERROR: unresolved HUD methods. This .so is not safe to deploy.'
+              exit 1
+            fi
+          done
+
+      - name: Upload compiled files
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: game-utils-api18-experimental
+          path: |
+            build/**/*.so
+            build/**/*.vdf
+          if-no-files-found: error
