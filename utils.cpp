@@ -305,8 +305,9 @@ struct PisexKHookBridge {
     static KHook::Return<bool> ProcessStringCmdPre(CServerSideClientBase* cl, const CNETMsg_StringCmd_t& msg) {
         bool allow=g_Menus.OnProcessStringCmd(cl,msg); return {allow ? KHook::Action::Ignore : KHook::Action::Supersede,allow};
     }
-    static KHook::Return<void> BuildGameSessionManifestPost(IGameSystem*, const EventBuildGameSessionManifest_t& ev) {
-        g_Menus.OnBuildGameSessionManifest(ev); return {KHook::Action::Ignore};
+    static KHook::Return<void> BuildGameSessionManifestPost(IGameSystem*, const EventBuildGameSessionManifest_t* const ev) {
+        if (ev) g_Menus.OnBuildGameSessionManifest(*ev);
+        return {KHook::Action::Ignore};
     }
 
     inline static KHook::Virtual<IServerGameDLL, void> preFatalShutdown{&IServerGameDLL::PreFatalShutdown,&PreFatalShutdownPre,&PreFatalShutdownPost};
@@ -325,7 +326,7 @@ struct PisexKHookBridge {
     inline static KHook::Virtual<CServerSideClient,void,ENetworkDisconnectionReason> clientSessionDisconnect{&CServerSideClient::PerformDisconnection,&ServerClientDisconnectPre,nullptr};
     inline static KHook::Virtual<CServerSideClientBase,bool,const CNETMsg_Tick_t&> processTick{&CServerSideClientBase::ProcessTick,&ProcessTickPre,nullptr};
     inline static KHook::Virtual<CServerSideClientBase,bool,const CNETMsg_StringCmd_t&> processStringCmd{&CServerSideClientBase::ProcessStringCmd,&ProcessStringCmdPre,nullptr};
-    inline static KHook::Virtual<IGameSystem,void,const EventBuildGameSessionManifest_t&> buildGameManifest{&IGameSystem::BuildGameSessionManifest,nullptr,&BuildGameSessionManifestPost};
+    inline static KHook::Virtual<IGameSystem,void,const EventBuildGameSessionManifest_t* const> buildGameManifest{&IGameSystem::OnBuildGameSessionManifest,nullptr,&BuildGameSessionManifestPost};
 
     inline static void* pawnFake[1]={};
     inline static void* serverClientFake[1]={};
@@ -439,7 +440,7 @@ struct PisexKHookBridge {
         if (clients) clientConnected.RemoveGlobal(clients);
         if (gameDll) gameFrame.RemoveGlobal(gameDll);
     }
-}
+};
 
 
 // IServerGameClients
