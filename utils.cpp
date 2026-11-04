@@ -274,8 +274,13 @@ struct PisexKHookBridge {
     static KHook::Return<void> ClientSvcUserMessagePre(IServerGameClients*, CPlayerSlot slot, int type, uint32 size, const void* data) {
         g_Menus.OnClientSvcUserMessage(slot,type,size,data); return {KHook::Action::Ignore};
     }
-    static KHook::Return<void> CheckTransmitPost(ISource2GameEntities*, CCheckTransmitInfo** info, int n, CBitVec<16384>& u1, CBitVec<16384>& u2, const Entity2Networkable_t** ents, const uint16* indexes, int count, bool enable) {
-        g_Menus.OnCheckTransmit(info,n,u1,u2,ents,indexes,count,enable); return {KHook::Action::Ignore};
+    // HL2SDK cs2 eiface.h: ISource2GameEntities::CheckTransmit has 7 arguments.
+    // The old eighth bool was removed from the SDK declaration.
+    static KHook::Return<void> CheckTransmitPost(ISource2GameEntities*, CCheckTransmitInfo** info, int n, CBitVec<16384>& u1, CBitVec<16384>& u2, const Entity2Networkable_t** ents, const uint16* indexes, int count) {
+        // Existing listener API retains its bool for backwards compatibility;
+        // the old flag is not present in this SDK, so pass false explicitly.
+        g_Menus.OnCheckTransmit(info,n,u1,u2,ents,indexes,count,false);
+        return {KHook::Action::Ignore};
     }
     static KHook::Return<void> StartupServerPost(INetworkServerService*, const GameSessionConfiguration_t& config, ISource2WorldSession* sess, const char* map) {
         g_Menus.StartupServer(config,sess,map); return {KHook::Action::Ignore};
@@ -293,8 +298,10 @@ struct PisexKHookBridge {
     static KHook::Return<bool> OnTakeDamageAlivePre(CCSPlayerPawn* pawn, CTakeDamageInfoContainer* data) {
         g_Menus.Hook_OnTakeDamage_Alive(pawn,data); return {KHook::Action::Ignore,true};
     }
-    static KHook::Return<void> ServerClientConnectPost(CServerSideClient* cl, int socket, const char* name, int id, INetChannel* channel, uint8 flags, uint32 challenge) {
-        g_Menus.OnServerSideClientClientConnect(cl,socket,name,id,channel,flags,challenge); return {KHook::Action::Ignore};
+    // Pisex/SchemaEntity serversideclient.h: Connect(int, const char*, int, void*, bool, int, int).
+    static KHook::Return<void> ServerClientConnectPost(CServerSideClient* cl, int socket, const char* name, int id, void* connection, bool fakePlayer, int arg6, int arg7) {
+        g_Menus.OnServerSideClientClientConnect(cl,socket,name,id,connection,fakePlayer,arg6,arg7);
+        return {KHook::Action::Ignore};
     }
     static KHook::Return<void> ServerClientDisconnectPre(CServerSideClient* cl, ENetworkDisconnectionReason reason) {
         g_Menus.OnCServerSideClientlientPerformDisconnection(cl,reason); return {KHook::Action::Ignore};
@@ -318,11 +325,11 @@ struct PisexKHookBridge {
     inline static KHook::Virtual<IServerGameClients,void,CPlayerSlot,const CCommand&> clientCommand{&IServerGameClients::ClientCommand,&ClientCommandPre,nullptr};
     inline static KHook::Virtual<IServerGameClients,bool,CPlayerSlot,const char*,uint64,const char*,bool,CBufferString*> clientConnect{&IServerGameClients::ClientConnect,&ClientConnectPre,nullptr};
     inline static KHook::Virtual<IServerGameClients,void,CPlayerSlot,int,uint32,const void*> clientSvcMessage{&IServerGameClients::ClientSvcUserMessage,&ClientSvcUserMessagePre,nullptr};
-    inline static KHook::Virtual<ISource2GameEntities,void,CCheckTransmitInfo**,int,CBitVec<16384>&,CBitVec<16384>&,const Entity2Networkable_t**,const uint16*,int,bool> checkTransmit{&ISource2GameEntities::CheckTransmit,nullptr,&CheckTransmitPost};
+    inline static KHook::Virtual<ISource2GameEntities,void,CCheckTransmitInfo**,int,CBitVec<16384>&,CBitVec<16384>&,const Entity2Networkable_t**,const uint16*,int> checkTransmit{&ISource2GameEntities::CheckTransmit,nullptr,&CheckTransmitPost};
     inline static KHook::Virtual<INetworkServerService,void,const GameSessionConfiguration_t&,ISource2WorldSession*,const char*> startupServer{&INetworkServerService::StartupServer,nullptr,&StartupServerPost};
     inline static KHook::Virtual<IGameEventManager2,bool,IGameEvent*,bool> fireEvent{&IGameEventManager2::FireEvent,&FireEventPre,&FireEventPost};
     inline static KHook::Virtual<CCSPlayerPawn,bool,CTakeDamageInfoContainer*> takeDamageAlive{std::uint32_t{0},&OnTakeDamageAlivePre,nullptr};
-    inline static KHook::Virtual<CServerSideClient,void,int,const char*,int,INetChannel*,uint8,uint32> clientSessionConnect{&CServerSideClient::Connect,nullptr,&ServerClientConnectPost};
+    inline static KHook::Virtual<CServerSideClient,void,int,const char*,int,void*,bool,int,int> clientSessionConnect{&CServerSideClient::Connect,nullptr,&ServerClientConnectPost};
     inline static KHook::Virtual<CServerSideClient,void,ENetworkDisconnectionReason> clientSessionDisconnect{&CServerSideClient::PerformDisconnection,&ServerClientDisconnectPre,nullptr};
     inline static KHook::Virtual<CServerSideClientBase,bool,const CNETMsg_Tick_t&> processTick{&CServerSideClientBase::ProcessTick,&ProcessTickPre,nullptr};
     inline static KHook::Virtual<CServerSideClientBase,bool,const CNETMsg_StringCmd_t&> processStringCmd{&CServerSideClientBase::ProcessStringCmd,&ProcessStringCmdPre,nullptr};
@@ -1473,7 +1480,7 @@ bool Menus::Hook_OnTakeDamage_Alive(CCSPlayerPawn *pPawn, CTakeDamageInfoContain
 	return true;
 }
 
-void Menus::OnServerSideClientClientConnect(CServerSideClient* pClient, int socket, const char* pszName, int nUserID, INetChannel* pNetChannel, uint8 nConnectionTypeFlags, uint32 uChallengeNumber)
+void Menus::OnServerSideClientClientConnect(CServerSideClient* pClient, int socket, const char* pszName, int nUserID, void* pConnection, bool bFakePlayer, int nArg6, int nArg7)
 {
 
 	if(!pClient) return;
