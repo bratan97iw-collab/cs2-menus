@@ -167,7 +167,7 @@ private:
 	void OnClientSvcUserMessage( CPlayerSlot slot, int um_type, uint32 size, const void *buf );
 	bool Hook_OnTakeDamage_Alive(CCSPlayerPawn *pPawn, CTakeDamageInfoContainer *pInfoContainer);
 
-	void OnServerSideClientClientConnect(CServerSideClient* pClient, int socket, const char* pszName, int nUserID, INetChannel* pNetChannel, uint8 nConnectionTypeFlags, uint32 uChallengeNumber);
+	void OnServerSideClientClientConnect(CServerSideClient* pClient, int socket, const char* pszName, int nUserID, void* pConnection, bool bFakePlayer, int nArg6, int nArg7);
 	void OnCServerSideClientlientPerformDisconnection(CServerSideClient* pClient, ENetworkDisconnectionReason reason);
 	bool OnProcessTick(CServerSideClientBase* pClient, const CNETMsg_Tick_t& msg);
 	bool OnProcessStringCmd(CServerSideClientBase* pClient, const CNETMsg_StringCmd_t& msg);
