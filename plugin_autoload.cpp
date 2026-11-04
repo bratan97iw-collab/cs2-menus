@@ -1,6 +1,5 @@
 #include <ISmmPlugin.h>
 #include <tier0/dbg.h>
-#include <color.h>
 #include <cstring>
 #include <string>
 #include <fstream>
@@ -290,11 +289,11 @@ int Autoload_SyncVDF(const char *szRelDir, const std::set<std::string> &skip)
 			}
 			if (FileExists(base + "/" + v.file + kBinaryExt))
 			{
-				ConColorMsg(Color(255, 165, 0, 255), "[utils] Plugins: %s skipped, %s already loads \"%s\"\n", rel.c_str(), v.vdfName.c_str(), v.file.c_str());
+				Msg("[utils] Plugins: %s skipped, %s already loads \"%s\"\n", rel.c_str(), v.vdfName.c_str(), v.file.c_str());
 				bForeign = true;
 				break;
 			}
-			ConColorMsg(Color(255, 165, 0, 255), "[utils] Plugins: %s points to missing \"%s\" (not touched), remove it by hand\n", v.vdfName.c_str(), v.file.c_str());
+			Msg("[utils] Plugins: %s points to missing \"%s\" (not touched), remove it by hand\n", v.vdfName.c_str(), v.file.c_str());
 		}
 		if (bForeign)
 			continue;
@@ -303,7 +302,7 @@ int Autoload_SyncVDF(const char *szRelDir, const std::set<std::string> &skip)
 			std::string oldFile = pOld->file;
 			if (WriteVdf(mmDir + "/" + pOld->vdfName, stem, file))
 			{
-				ConColorMsg(Color(255, 165, 0, 255), "[utils] Plugins: %s: \"%s\" -> \"%s\"\n", pOld->vdfName.c_str(), oldFile.c_str(), file.c_str());
+				Msg("[utils] Plugins: %s: \"%s\" -> \"%s\"\n", pOld->vdfName.c_str(), oldFile.c_str(), file.c_str());
 				pOld->file = file;
 				nFixed++;
 			}
@@ -317,11 +316,11 @@ int Autoload_SyncVDF(const char *szRelDir, const std::set<std::string> &skip)
 		{
 			usedNames.insert(Lower(name));
 			vdfs.push_back({name, file, true});
-			ConColorMsg(Color(255, 165, 0, 255), "[utils] Plugins: created %s -> \"%s\"\n", name.c_str(), file.c_str());
+			Msg("[utils] Plugins: created %s -> \"%s\"\n", name.c_str(), file.c_str());
 			nCreated++;
 		}
 		else
-			ConColorMsg(Color(255, 0, 0, 255), "[utils] Plugins: can't write %s/%s\n", mmDir.c_str(), name.c_str());
+			Msg("[utils] Plugins: can't write %s/%s\n", mmDir.c_str(), name.c_str());
 	}
 
 	for (const VdfEntry &v : vdfs)
@@ -335,7 +334,7 @@ int Autoload_SyncVDF(const char *szRelDir, const std::set<std::string> &skip)
 	}
 
 	if (nCreated || nFixed || nRemoved)
-		ConColorMsg(Color(0, 255, 0, 255), "[utils] Plugins: vdf created %d, fixed %d, removed %d\n", nCreated, nFixed, nRemoved);
+		Msg("[utils] Plugins: vdf created %d, fixed %d, removed %d\n", nCreated, nFixed, nRemoved);
 	
 	return nCreated + nFixed;
 }
