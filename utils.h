@@ -9,7 +9,6 @@
 #include <steam/steam_gameserver.h>
 #include "irecipientfilter.h"
 #include <engine/igameeventsystem.h>
-#include <igameevents.h>
 #include "entitysystem.h"
 #include "vector.h"
 #include "entitykeyvalues.h"
@@ -45,7 +44,8 @@
 #include "customhud.pb.h"
 
 static constexpr int CS_UM_CustomHudClicked = 390;
-using CCSUsrMsg_CustomHudClicked_t = CNetMessagePB<CCSUsrMsg_CustomHudClicked>;
+class CCSUsrMsg_CustomHudClicked_t
+    : public CUserMessagePB<CS_UM_CustomHudClicked, CCSUsrMsg_CustomHudClicked> {};
 
 class CPhysicsQuery;
 
@@ -70,8 +70,6 @@ public:
 	bool IsInitMessage(void) const override { return m_bInitMessage; }
 	const CPlayerBitVec& GetRecipients(void) const override { return m_Recipients; }
 	CPlayerSlot GetPredictedPlayerSlot() const override { return m_nPredictedByPlayerSlot; }
-
-	void SetRecipients(const CPlayerBitVec& recipients) { m_Recipients = recipients; }
 
 	void AddRecipient(int iSlot)
 	{
@@ -102,13 +100,14 @@ extern std::map<int, std::map<std::string, CommandCallback>> ChatCommands;
 
 class Menus final : public ISmmPlugin, public IMetamodListener, public IEntityListener
 {
+    friend struct PisexKHookBridge;
 public:
 	bool Load(PluginId id, ISmmAPI* ismm, char* error, size_t maxlen, bool late);
 	bool Unload(char* error, size_t maxlen);
 	void AllPluginsLoaded();
 	void* OnMetamodQuery(const char* iface, int* ret);
 	void OnPluginUnload(PluginId id);
-	bool FireEvent(IGameEvent* pEvent, bool bDontBroadcast);
+	bool FireEvent(IGameEvent* pEvent, bool& bDontBroadcast);
 	STEAM_GAMESERVER_CALLBACK_MANUAL(Menus, OnValidateAuthTicket, ValidateAuthTicketResponse_t, m_CallbackValidateAuthTicketResponse);
 private:
 	const char* GetAuthor();
@@ -121,10 +120,10 @@ private:
 	const char* GetLogTag();
 
 private:
-	void ClientCommand(CPlayerSlot slot, const CCommand &args);
+	bool ClientCommand(CPlayerSlot slot, const CCommand &args);
 	void GameFrame(bool simulating, bool bFirstTick, bool bLastTick);
 	void StartupServer(const GameSessionConfiguration_t& config, ISource2WorldSession*, const char*);
-    void OnDispatchConCommand(ConCommandRef cmd, const CCommandContext& ctx, const CCommand& args);
+    bool OnDispatchConCommand(ConCommandRef cmd, const CCommandContext& ctx, const CCommand& args);
 	void OnClientDisconnect( CPlayerSlot slot, ENetworkDisconnectionReason reason, const char *pszName, uint64 xuid, const char *pszNetworkID );
 	void OnGameServerSteamAPIActivated();
 	void OnPreWorldUpdate(bool simulating);
@@ -163,12 +162,12 @@ private:
 	bool OnProcessClientVoiceData( CPlayerSlot slot, void *pVoiceInfo );
 	void OnCheckTransmit(CCheckTransmitInfo **pInfoInfoList, int nInfoCount, CBitVec<16384> &unionTransmitEdicts, CBitVec<16384> &, const Entity2Networkable_t **pNetworkables, const uint16 *pEntityIndicies, int nEntityIndices, bool bEnablePVSBits);
 	void OnClientSvcUserMessage( CPlayerSlot slot, int um_type, uint32 size, const void *buf );
-	bool Hook_OnTakeDamage_Alive(CTakeDamageInfoContainer *pInfoContainer);
+	bool Hook_OnTakeDamage_Alive(CCSPlayerPawn *pPawn, CTakeDamageInfoContainer *pInfoContainer);
 
-	void OnServerSideClientClientConnect(int socket, const char* pszName, int nUserID, INetChannel* pNetChannel, uint8 nConnectionTypeFlags, uint32 uChallengeNumber);
-	void OnCServerSideClientlientPerformDisconnection(ENetworkDisconnectionReason reason);
-	bool OnProcessTick(const CNETMsg_Tick_t& msg);
-	bool OnProcessStringCmd(const CNETMsg_StringCmd_t& msg);
+	void OnServerSideClientClientConnect(CServerSideClient* pClient, int socket, const char* pszName, int nUserID, INetChannel* pNetChannel, uint8 nConnectionTypeFlags, uint32 uChallengeNumber);
+	void OnCServerSideClientlientPerformDisconnection(CServerSideClient* pClient, ENetworkDisconnectionReason reason);
+	bool OnProcessTick(CServerSideClientBase* pClient, const CNETMsg_Tick_t& msg);
+	bool OnProcessStringCmd(CServerSideClientBase* pClient, const CNETMsg_StringCmd_t& msg);
 
 	void OnEntityCreated(CEntityInstance* pEntity) override;
 	void OnEntitySpawned(CEntityInstance* pEntity) override;
